@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-import os
+from streamlit_gsheets import GSheetsConnection
+import io
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG
@@ -11,8 +12,6 @@ st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
 # -----------------------------------------------------------------------------
 # 2. HELPER FUNCTIONS & CONFIG
 # -----------------------------------------------------------------------------
-CSV_FILE = "bookings.csv"
-
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
@@ -64,38 +63,37 @@ def reset_form_state():
     st.session_state['f_mode'] = "Cash"
     st.session_state['f_remarks'] = ""
 
-# --- DATA FUNCTIONS (UPDATED FOR CSV) ---
+# --- GOOGLE SHEETS FUNCTIONS ---
 
 def get_data():
-    """Reads data from local CSV file instead of Google Sheets"""
-    if not os.path.exists(CSV_FILE):
-        return pd.DataFrame(columns=EXPECTED_HEADERS)
-    
+    conn = st.connection("gsheets", type=GSheetsConnection)
     try:
-        df = pd.read_csv(CSV_FILE)
-        # Normalize headers
-        df.columns = [str(c).lower().strip() for c in df.columns]
+        df = conn.read(worksheet="Sheet1", ttl=0)
         
-        # Ensure all columns exist
-        for col in EXPECTED_HEADERS:
-            if col not in df.columns: df[col] = ""
+        if df.empty:
+            return pd.DataFrame(columns=EXPECTED_HEADERS)
             
-        # Cleanup Types
+        df.columns = [str(c).lower().strip() for c in df.columns]
+
+        for col in EXPECTED_HEADERS:
+            if col not in df.columns: df[col] = "" 
+
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
+        
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-        
+            
         text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
         for col in text_cols: df[col] = df[col].fillna("").astype(str)
-        
+
         return df
     except Exception:
         return pd.DataFrame(columns=EXPECTED_HEADERS)
 
 def save_data(df):
-    """Saves data to local CSV file"""
-    df.to_csv(CSV_FILE, index=False)
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    conn.update(worksheet="Sheet1", data=df)
 
 def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
     if df.empty: return False
@@ -118,7 +116,7 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # --- MESSAGE CENTER ---
+    # --- MESSAGE BAR (Replaces Pop-ups for stability) ---
     message_box = st.empty()
 
     # A. Success Logic
@@ -143,12 +141,12 @@ def main():
             booked_by = col_name.text_input("Booked By (Name)", key='f_name')
             
             time_slots = get_time_slots()
-            try: s_idx, e_idx = time_slots.index(st.session_state['f_start']), time_slots.index(st.session_state['f_end'])
-            except ValueError: s_idx, e_idx = 40, 42 
-
+            
+            # --- FIX: Removed 'index=' to fix Session State Warning ---
             c1, c2, c3 = st.columns(3)
-            b_start = c1.selectbox("Start Time", time_slots, index=s_idx, format_func=convert_to_12h, key='f_start')
-            b_end = c2.selectbox("End Time", time_slots, index=e_idx, format_func=convert_to_12h, key='f_end')
+            b_start = c1.selectbox("Start Time", time_slots, format_func=convert_to_12h, key='f_start')
+            b_end = c2.selectbox("End Time", time_slots, format_func=convert_to_12h, key='f_end')
+            
             rate = c3.number_input("Ground Fees (₹)", step=100.0, key='f_fees')
             
             st.markdown("---")
@@ -164,13 +162,12 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # Validation
+                # --- VALIDATION ---
                 if b_start >= b_end:
                     message_box.error("❌ **Error:** End time must be after Start time.")
                 elif check_overlap(df, b_date_str, b_start, b_end):
                     message_box.error(f"⚠️ **Overlap Detected:** A booking already exists on {b_date_str} in this slot.")
                 else:
-                    # Save
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -255,8 +252,12 @@ def main():
             show_p['total_charges'] = show_p['total_charges'].apply(lambda x: f"₹{x:,.0f}")
             show_p['remaining_due'] = show_p['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
             st.dataframe(show_p, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
-            # Excel Download for CSV data
-            st.download_button("📥 Download History CSV", df.to_csv(index=False).encode('utf-8'), "turf_history.csv", "text/csv")
+            
+            # --- EXCEL DOWNLOAD (Restored) ---
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                past_df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False, sheet_name='History')
+            st.download_button("📥 Download History Excel", output.getvalue(), f"turf_history_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     with tab3:
         if df.empty: st.write("No records.")
