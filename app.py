@@ -36,17 +36,19 @@ def get_time_slots():
         start += timedelta(minutes=30)
     return slots
 
-def init_form_state():
+def init_session_state():
+    # Form defaults
     defaults = {
         'f_date': datetime.now().date(),
         'f_name': "",
-        'f_start': "20:00", 
-        'f_end': "21:00",   
-        'f_fees': 1000.0,
-        'f_adv': 0.0,
-        'f_bal': 0.0,
-        'f_mode': "Cash",
-        'f_remarks': "" 
+        'f_start': "20:00", 'f_end': "21:00",
+        'f_fees': 1000.0, 'f_adv': 0.0, 'f_bal': 0.0,
+        'f_mode': "Cash", 'f_remarks': "",
+        # App State
+        'expand_new': False,       # Controls if "Add New" is open/closed
+        'edit_mode': False,        # Controls if we are editing
+        'edit_id': None,           # ID being edited
+        'success_msg': None        # Message to show after reload
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -64,29 +66,20 @@ def reset_form_state():
     st.session_state['f_remarks'] = ""
 
 # --- GOOGLE SHEETS FUNCTIONS ---
-
 def get_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        
-        if df.empty:
-            return pd.DataFrame(columns=EXPECTED_HEADERS)
-            
+        if df.empty: return pd.DataFrame(columns=EXPECTED_HEADERS)
         df.columns = [str(c).lower().strip() for c in df.columns]
-
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
-
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
-        
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-            
         text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
         for col in text_cols: df[col] = df[col].fillna("").astype(str)
-
         return df
     except Exception:
         return pd.DataFrame(columns=EXPECTED_HEADERS)
@@ -116,238 +109,234 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # --- RESET LOGIC ---
-    if st.session_state.get('trigger_reset', False):
-        reset_form_state()
-        st.session_state['trigger_reset'] = False 
+    # Init State
+    init_session_state()
     
-    # --- INIT ---
-    init_form_state()
+    # Message Bar
+    msg_box = st.empty()
+    if st.session_state['success_msg']:
+        msg_box.success(st.session_state['success_msg'])
+        st.session_state['success_msg'] = None # Clear after showing
+
+    # Load Data
     df = get_data()
 
-    # --- SECTION 1: CREATE BOOKING ---
-    # We use 'expanded=True' so success messages are visible after reload
-    with st.expander("➕ Create New Booking", expanded=True):
-        with st.form("add_booking_form", clear_on_submit=False):
-            col_date, col_name = st.columns([1, 2])
-            b_date = col_date.date_input("Date", key='f_date')
-            booked_by = col_name.text_input("Booked By (Name)", key='f_name')
+    # ---------------------------------------------------------
+    # PART A: EDIT SCREEN (Only visible if a row is selected)
+    # ---------------------------------------------------------
+    if st.session_state['edit_mode'] and st.session_state['edit_id'] is not None:
+        edit_id = st.session_state['edit_id']
+        record = df[df['id'] == edit_id].iloc[0]
+        
+        st.subheader(f"✏️ Editing Booking: {record['booked_by']}")
+        
+        with st.form("edit_form"):
+            c1, c2 = st.columns(2)
+            e_date = c1.date_input("Date", datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
+            e_name = c2.text_input("Name", value=record['booked_by'])
             
             time_slots = get_time_slots()
-            c1, c2, c3 = st.columns(3)
-            b_start = c1.selectbox("Start Time", time_slots, format_func=convert_to_12h, key='f_start')
-            b_end = c2.selectbox("End Time", time_slots, format_func=convert_to_12h, key='f_end')
-            rate = c3.number_input("Ground Fees (₹)", step=100.0, key='f_fees')
+            try: s_idx, e_idx = time_slots.index(record['start_time']), time_slots.index(record['end_time'])
+            except: s_idx, e_idx = 40, 42
             
-            st.markdown("---")
-            st.caption("Payment Details")
-            p1, p2, p3 = st.columns(3)
-            adv_paid = p1.number_input("Advance Paid (₹)", step=100.0, key='f_adv')
-            bal_paid = p2.number_input("Balance Paid Now (₹)", step=100.0, key='f_bal')
-            adv_mode = p3.selectbox("Payment Mode", PAYMENT_MODES, key='f_mode')
-            remarks = st.text_input("Remarks", placeholder="Optional notes", key='f_remarks')
+            c3, c4 = st.columns(2)
+            e_start = c3.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h)
+            e_end = c4.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h)
+            e_rate = st.number_input("Ground Fees", value=float(record['rate_per_hour']))
             
-            # Button
-            submitted = st.form_submit_button("✅ Confirm Booking", type="primary")
+            st.divider()
+            c5, c6, c7 = st.columns(3)
+            e_adv = c5.number_input("Advance Paid", value=float(record['advance_paid']))
+            e_bal_paid = c6.number_input("Balance Paid", value=float(record['balance_paid']))
             
-            # --- MESSAGE PLACEHOLDER (Right below the Create button) ---
-            create_msg_box = st.empty()
+            curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
+            mode_idx = PAYMENT_MODES.index(curr_mode) if curr_mode in PAYMENT_MODES else 0
+            e_mode = c7.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
+            e_remarks = st.text_input("Remarks", value=str(record['remarks']))
 
-            if submitted:
-                b_date_str = b_date.strftime("%Y-%m-%d")
-                
-                # Validation
-                if b_start >= b_end:
-                    create_msg_box.error("❌ End time must be after Start time.")
-                elif check_overlap(df, b_date_str, b_start, b_end):
-                    create_msg_box.error(f"⚠️ Overlap detected on {b_date_str}. Please choose a different slot.")
+            b1, b2, b3 = st.columns([1, 1, 4])
+            cancel_btn = b1.form_submit_button("🔙 Cancel")
+            del_btn = b2.form_submit_button("🗑️ Delete")
+            save_btn = b3.form_submit_button("💾 Save Changes", type="primary")
+
+            if cancel_btn:
+                st.session_state['edit_mode'] = False
+                st.session_state['edit_id'] = None
+                st.rerun()
+
+            if del_btn:
+                df_new = df[df['id'] != edit_id]
+                save_data(df_new)
+                st.session_state['success_msg'] = "🗑️ Record Deleted Successfully"
+                st.session_state['edit_mode'] = False
+                st.session_state['edit_id'] = None
+                st.rerun()
+
+            if save_btn:
+                e_date_str = e_date.strftime("%Y-%m-%d")
+                if e_start >= e_end:
+                    st.error("❌ End time must be after Start time.")
+                elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
+                    st.error("⚠️ Overlap Detected!")
                 else:
-                    # Save Data
                     fmt = "%H:%M"
-                    dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
-                    total = dur * rate
-                    remaining = total - adv_paid - bal_paid
+                    dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
+                    tot = dur * e_rate
+                    rem = tot - e_adv - e_bal_paid
                     
-                    new_record = pd.DataFrame([{
-                        "id": get_next_id(df),
-                        "booking_date": b_date_str,
-                        "start_time": b_start,
-                        "end_time": b_end,
-                        "total_hours": dur,
-                        "rate_per_hour": rate,
-                        "total_charges": total,
-                        "booked_by": booked_by,
-                        "advance_paid": adv_paid,
-                        "advance_mode": adv_mode,
-                        "balance_paid": bal_paid,
-                        "balance_mode": adv_mode,
-                        "remaining_due": remaining,
-                        "remarks": remarks
-                    }])
+                    idx = df.index[df['id'] == edit_id][0]
+                    df.at[idx, 'booking_date'] = e_date_str
+                    df.at[idx, 'booked_by'] = e_name
+                    df.at[idx, 'start_time'] = e_start
+                    df.at[idx, 'end_time'] = e_end
+                    df.at[idx, 'total_hours'] = dur
+                    df.at[idx, 'rate_per_hour'] = e_rate
+                    df.at[idx, 'total_charges'] = tot
+                    df.at[idx, 'advance_paid'] = e_adv
+                    df.at[idx, 'balance_paid'] = e_bal_paid
+                    df.at[idx, 'advance_mode'] = e_mode
+                    df.at[idx, 'remaining_due'] = rem
+                    df.at[idx, 'remarks'] = e_remarks
                     
-                    updated_df = pd.concat([df, new_record], ignore_index=True)
-                    save_data(updated_df)
-                    
-                    st.session_state['trigger_reset'] = True 
-                    # Store success info for display after reload
-                    st.session_state['last_action'] = 'create'
-                    st.session_state['last_msg'] = f"✅ Booking Confirmed for {booked_by}!"
+                    save_data(df)
+                    st.session_state['success_msg'] = "💾 Changes Saved!"
+                    st.session_state['edit_mode'] = False
+                    st.session_state['edit_id'] = None
                     st.rerun()
 
-        # Check if we just reloaded from a successful create
-        if st.session_state.get('last_action') == 'create':
-            create_msg_box.success(st.session_state['last_msg'])
-            st.session_state['last_action'] = None # Clear it
-
-    st.markdown("---")
-
-    # --- SECTION 2: DATA GRID ---
-    search_query = st.text_input("🔍 Search (Name or Date YYYY-MM-DD)", placeholder="Type name...")
-
-    if not df.empty:
-        df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
-        today = datetime.now().date()
-        if search_query:
-            filtered_df = df[
-                df['booked_by'].str.contains(search_query, case=False, na=False) | 
-                df['booking_date'].astype(str).str.contains(search_query, case=False, na=False)
-            ]
-        else:
-            filtered_df = df
-        future_df = filtered_df[filtered_df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'], ascending=[True, True])
-        past_df = filtered_df[filtered_df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
+    # ---------------------------------------------------------
+    # PART B: MAIN GRID SCREEN (Visible if NOT editing)
+    # ---------------------------------------------------------
     else:
-        future_df = pd.DataFrame()
-        past_df = pd.DataFrame()
-
-    tab1, tab2, tab3 = st.tabs(["📅 Upcoming Bookings", "📜 Booking History", "✏️ Edit / Update"])
-    
-    grid_config = {
-        "id": st.column_config.NumberColumn("ID", width="small"),
-        "booking_date": "Date", 
-        "formatted_start": "Start", 
-        "formatted_end": "End", 
-        "booked_by": "Name", 
-        "total_charges": "Total",
-        "remaining_due": "Due",
-        "advance_mode": "Mode",
-        "remarks": "Remarks"
-    }
-    visible_cols = ["id", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"]
-
-    with tab1:
-        if future_df.empty: st.info("No upcoming bookings.")
-        else:
-            show_f = future_df.copy()
-            show_f['formatted_start'] = show_f['start_time'].apply(convert_to_12h)
-            show_f['formatted_end'] = show_f['end_time'].apply(convert_to_12h)
-            show_f['total_charges'] = show_f['total_charges'].apply(lambda x: f"₹{x:,.0f}")
-            show_f['remaining_due'] = show_f['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(show_f, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
-
-    with tab2:
-        if past_df.empty: st.info("No past history.")
-        else:
-            show_p = past_df.copy()
-            show_p['formatted_start'] = show_p['start_time'].apply(convert_to_12h)
-            show_p['formatted_end'] = show_p['end_time'].apply(convert_to_12h)
-            show_p['total_charges'] = show_p['total_charges'].apply(lambda x: f"₹{x:,.0f}")
-            show_p['remaining_due'] = show_p['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(show_p, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                past_df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False, sheet_name='History')
-            st.download_button("📥 Download History Excel", output.getvalue(), f"turf_history_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    with tab3:
-        if df.empty: st.write("No records.")
-        else:
-            df['label'] = df['booking_date'].astype(str) + " (" + df['start_time'].astype(str) + ") - " + df['booked_by'].astype(str)
-            id_to_label = dict(zip(df['id'], df['label']))
-            if search_query:
-                search_mask = (df['booked_by'].str.contains(search_query, case=False, na=False) | df['booking_date'].astype(str).str.contains(search_query, case=False, na=False))
-                options = df[search_mask]['id'].tolist()
-            else:
-                options = df['id'].tolist()
-            if not options: st.warning("No records match.")
-            else:
-                edit_id = st.selectbox("Select Booking to Edit", options, format_func=lambda x: id_to_label.get(x, f"ID: {x}"))
-                record = df[df['id'] == edit_id].iloc[0]
-                with st.form("edit_form"):
-                    st.subheader(f"Edit: {record['booked_by']}")
-                    c_a, c_b = st.columns(2)
-                    e_date = c_a.date_input("Date", datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
-                    e_name = c_b.text_input("Name", value=record['booked_by'])
-                    
-                    time_slots = get_time_slots()
-                    try: s_idx, e_idx = time_slots.index(record['start_time']), time_slots.index(record['end_time'])
-                    except: s_idx, e_idx = 40, 42
-                    
-                    e_start = c_a.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h, key='es')
-                    e_end = c_b.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h, key='ee')
-                    e_rate = c_a.number_input("Ground Fees", value=float(record['rate_per_hour']))
-                    st.divider()
-                    st.write("**Payment & Remarks**")
-                    pa, pb = st.columns(2)
-                    e_adv = pa.number_input("Advance Paid", value=float(record['advance_paid']))
-                    e_bal_paid = pb.number_input("Balance Paid", value=float(record['balance_paid']))
-                    curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
-                    mode_idx = PAYMENT_MODES.index(curr_mode) if curr_mode in PAYMENT_MODES else 0
-                    e_mode = st.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
-                    e_remarks = st.text_input("Remarks", value=str(record['remarks']))
-
-                    # Buttons
-                    col_b1, col_b2 = st.columns([1, 1])
-                    del_btn = col_b1.form_submit_button("🗑️ Delete Booking")
-                    upd_submit = col_b2.form_submit_button("💾 Save Changes", type="primary")
-
-                    # --- MESSAGE PLACEHOLDER (Inside Edit Form) ---
-                    edit_msg_box = st.empty()
-
-                # LOGIC FOR EDIT/DELETE
-                if del_btn:
-                    df_new = df[df['id'] != edit_id]
-                    save_data(df_new)
-                    st.session_state['last_action'] = 'edit'
-                    st.session_state['last_msg'] = "🗑️ Record Deleted Successfully."
-                    st.rerun()
-
-                if upd_submit:
-                    e_date_str = e_date.strftime("%Y-%m-%d")
-                    
-                    if e_start >= e_end:
-                        edit_msg_box.error("❌ End time must be after Start time.")
-                    elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        edit_msg_box.error("⚠️ Overlap Detected: Please choose a different slot.")
+        # 1. ADD NEW BOOKING (Collapsed by default)
+        with st.expander("➕ Add New Booking", expanded=st.session_state['expand_new']):
+            with st.form("add_form", clear_on_submit=False):
+                c1, c2 = st.columns([1, 2])
+                b_date = c1.date_input("Date", key='f_date')
+                b_name = c2.text_input("Name", key='f_name')
+                
+                time_slots = get_time_slots()
+                c3, c4, c5 = st.columns(3)
+                b_start = c3.selectbox("Start", time_slots, format_func=convert_to_12h, key='f_start')
+                b_end = c4.selectbox("End", time_slots, format_func=convert_to_12h, key='f_end')
+                b_rate = c5.number_input("Fees", step=100.0, key='f_fees')
+                
+                c6, c7, c8 = st.columns(3)
+                b_adv = c6.number_input("Advance", step=100.0, key='f_adv')
+                b_bal = c7.number_input("Balance Paid", step=100.0, key='f_bal')
+                b_mode = c8.selectbox("Mode", PAYMENT_MODES, key='f_mode')
+                b_rem = st.text_input("Remarks", key='f_remarks')
+                
+                add_sub = st.form_submit_button("✅ Confirm Booking", type="primary")
+                
+                if add_sub:
+                    b_date_str = b_date.strftime("%Y-%m-%d")
+                    if b_start >= b_end:
+                        st.error("Error: End time must be after Start.")
+                    elif check_overlap(df, b_date_str, b_start, b_end):
+                        st.error("Error: Slot Overlap!")
                     else:
                         fmt = "%H:%M"
-                        dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
-                        tot = dur * e_rate
-                        rem = tot - e_adv - e_bal_paid
-                        idx = df.index[df['id'] == edit_id][0]
-                        df.at[idx, 'booking_date'] = e_date_str
-                        df.at[idx, 'booked_by'] = e_name
-                        df.at[idx, 'start_time'] = e_start
-                        df.at[idx, 'end_time'] = e_end
-                        df.at[idx, 'total_hours'] = dur
-                        df.at[idx, 'rate_per_hour'] = e_rate
-                        df.at[idx, 'total_charges'] = tot
-                        df.at[idx, 'advance_paid'] = e_adv
-                        df.at[idx, 'balance_paid'] = e_bal_paid
-                        df.at[idx, 'advance_mode'] = e_mode
-                        df.at[idx, 'remaining_due'] = rem
-                        df.at[idx, 'remarks'] = e_remarks
-                        save_data(df)
+                        dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
+                        tot = dur * b_rate
+                        rem = tot - b_adv - b_bal
                         
-                        st.session_state['last_action'] = 'edit'
-                        st.session_state['last_msg'] = "💾 Update Successful!"
+                        new_row = pd.DataFrame([{
+                            "id": get_next_id(df), "booking_date": b_date_str,
+                            "start_time": b_start, "end_time": b_end,
+                            "total_hours": dur, "rate_per_hour": b_rate, "total_charges": tot,
+                            "booked_by": b_name, "advance_paid": b_adv, "advance_mode": b_mode,
+                            "balance_paid": b_bal, "balance_mode": b_mode,
+                            "remaining_due": rem, "remarks": b_rem
+                        }])
+                        save_data(pd.concat([df, new_row], ignore_index=True))
+                        
+                        # Reset form and collapse expander
+                        reset_form_state()
+                        st.session_state['expand_new'] = False
+                        st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
                         st.rerun()
 
-                # Check if we just reloaded from a successful edit/delete
-                if st.session_state.get('last_action') == 'edit':
-                    edit_msg_box.success(st.session_state['last_msg'])
-                    st.session_state['last_action'] = None # Clear it
+        st.markdown("---")
+
+        # 2. UPCOMING BOOKINGS GRID
+        st.subheader("📅 Upcoming Bookings")
+        
+        if df.empty:
+            st.info("No bookings found.")
+        else:
+            # Prepare Data
+            df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
+            today = datetime.now().date()
+            
+            # Filter Future
+            future_df = df[df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'])
+            
+            if future_df.empty:
+                st.info("No upcoming bookings.")
+            else:
+                st.caption("👆 **Click on any row to Edit or Delete**")
+                
+                # Format for Display
+                display_df = future_df.copy()
+                display_df['S.No'] = range(1, len(display_df) + 1) # Generate Serial Numbers 1, 2, 3...
+                display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
+                display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
+                
+                # Configure Columns
+                grid_cols = {
+                    "S.No": st.column_config.NumberColumn("S.No", width="small"),
+                    "booking_date": "Date",
+                    "formatted_start": "Start",
+                    "formatted_end": "End",
+                    "booked_by": "Name",
+                    "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
+                    "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
+                    "advance_mode": "Mode",
+                    "remarks": "Remarks"
+                }
+                
+                # Show Grid with Selection
+                event = st.dataframe(
+                    display_df,
+                    column_config=grid_cols,
+                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"],
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",           # Make row selection trigger a rerun
+                    selection_mode="single-row"  # Only allow one row
+                )
+
+                # Handle Selection
+                if event.selection.rows:
+                    selected_index = event.selection.rows[0]
+                    # Get the actual Database ID (not the S.No)
+                    selected_db_id = display_df.iloc[selected_index]['id']
+                    
+                    # Set State to Edit Mode
+                    st.session_state['edit_mode'] = True
+                    st.session_state['edit_id'] = selected_db_id
+                    st.rerun()
+
+        # 3. PAST HISTORY (Read Only)
+        with st.expander("📜 View Booking History"):
+            past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
+            if not past_df.empty:
+                past_df['S.No'] = range(1, len(past_df) + 1)
+                st.dataframe(
+                    past_df,
+                    column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "total_charges"],
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                # Excel Download
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False)
+                st.download_button("📥 Download Full Excel", output.getvalue(), "bookings.xlsx")
+            else:
+                st.info("No past history.")
 
 if __name__ == "__main__":
     main()
