@@ -10,21 +10,7 @@ import io
 st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
 
 # -----------------------------------------------------------------------------
-# 2. POP-UP DIALOG FUNCTIONS (Must be defined at the top)
-# -----------------------------------------------------------------------------
-
-@st.dialog("✅ Success")
-def show_success_modal(message):
-    st.success(message)
-    st.write("The record has been saved successfully.")
-
-@st.dialog("⚠️ Attention Required")
-def show_error_modal(message):
-    st.error(message)
-    st.write("Please correct the error in the form and try again.")
-
-# -----------------------------------------------------------------------------
-# 3. CONSTANTS & HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
@@ -115,12 +101,17 @@ def get_next_id(df):
     return 1 if df.empty else df['id'].max() + 1
 
 # -----------------------------------------------------------------------------
-# 4. MAIN APPLICATION
+# 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # A. Check for Success Modal (Triggered after reload)
+    st.title("🏏 Cricket Academy Booking Manager")
+    
+    # --- NOTIFICATION BAR (Replaces Pop-ups) ---
+    message_box = st.empty()
+
+    # A. Success Logic (After Reload)
     if 'success_msg' in st.session_state:
-        show_success_modal(st.session_state['success_msg'])
+        message_box.success(f"✅ {st.session_state['success_msg']}")
         del st.session_state['success_msg']
     
     # B. Reset Logic
@@ -132,8 +123,6 @@ def main():
     init_form_state()
     df = get_data()
 
-    st.title("🏏 Cricket Academy Booking Manager")
-
     # --- Section 1: Create Booking ---
     with st.expander("➕ Create New Booking", expanded=True):
         with st.form("add_booking_form", clear_on_submit=False):
@@ -142,11 +131,8 @@ def main():
             booked_by = col_name.text_input("Booked By (Name)", key='f_name')
             
             time_slots = get_time_slots()
-            try:
-                s_idx = time_slots.index(st.session_state['f_start'])
-                e_idx = time_slots.index(st.session_state['f_end'])
-            except ValueError:
-                s_idx, e_idx = 40, 42 
+            try: s_idx, e_idx = time_slots.index(st.session_state['f_start']), time_slots.index(st.session_state['f_end'])
+            except ValueError: s_idx, e_idx = 40, 42 
 
             c1, c2, c3 = st.columns(3)
             b_start = c1.selectbox("Start Time", time_slots, index=s_idx, format_func=convert_to_12h, key='f_start')
@@ -166,17 +152,13 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # --- POP-UP VALIDATION LOGIC ---
+                # --- VALIDATION (Send errors to the top message box) ---
                 if b_start >= b_end:
-                    # Show Error Modal immediately (No rerun, so form stays filled)
-                    show_error_modal("❌ End time must be after Start time.")
-                
+                    message_box.error("❌ **Error:** End time must be after Start time.")
                 elif check_overlap(df, b_date_str, b_start, b_end):
-                    # Show Error Modal immediately
-                    show_error_modal(f"⚠️ Overlap detected on {b_date_str}! Please select a different time.")
-                
+                    message_box.error(f"⚠️ **Overlap Detected:** A booking already exists on {b_date_str} in this slot.")
                 else:
-                    # Validated - Save and show Success Modal
+                    # Validated - Save
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -313,11 +295,11 @@ def main():
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
-                    # --- EDIT VALIDATION (POP-UP) ---
+                    # --- EDIT VALIDATION ---
                     if e_start >= e_end:
-                        show_error_modal("❌ End time must be after Start time.")
+                        message_box.error("❌ **Error:** End time must be after Start time.")
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        show_error_modal("⚠️ Overlap Detected: Please choose a different slot.")
+                        message_box.error("⚠️ **Overlap Detected:** Please choose a different slot.")
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
