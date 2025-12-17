@@ -121,20 +121,13 @@ def main():
     # Init State
     init_session_state()
     
-    # Message Bar
-    msg_box = st.empty()
-    if st.session_state['success_msg']:
-        msg_box.success(st.session_state['success_msg'])
-        st.session_state['success_msg'] = None 
-
     # Load Data
     df = get_data()
 
-    # --- PRE-PROCESS DATE (CRITICAL FIX) ---
-    # We must calculate dt_obj here so it is available for ALL sections below
+    # --- PRE-PROCESS DATE ---
     if not df.empty:
         df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
-    # ---------------------------------------
+    # ------------------------
 
     # ---------------------------------------------------------
     # PART A: EDIT SCREEN (Only visible if a row is selected)
@@ -174,6 +167,9 @@ def main():
             del_btn = b2.form_submit_button("🗑️ Delete")
             save_btn = b3.form_submit_button("💾 Save Changes", type="primary")
 
+            # --- ERROR MESSAGE PLACEHOLDER (Below Buttons) ---
+            edit_msg_placeholder = st.empty()
+
             if cancel_btn:
                 st.session_state['edit_mode'] = False
                 st.session_state['edit_id'] = None
@@ -190,9 +186,9 @@ def main():
             if save_btn:
                 e_date_str = e_date.strftime("%Y-%m-%d")
                 if e_start >= e_end:
-                    st.error("❌ End time must be after Start time.")
+                    edit_msg_placeholder.error("❌ End time must be after Start time.")
                 elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                    st.error("⚠️ Overlap Detected!")
+                    edit_msg_placeholder.error("⚠️ Overlap Detected!")
                 else:
                     fmt = "%H:%M"
                     dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
@@ -245,13 +241,16 @@ def main():
                 b_rem = st.text_input("Remarks", key=f"rem_{fid}")
                 
                 add_sub = st.form_submit_button("✅ Confirm Booking", type="primary")
+
+                # --- ERROR MESSAGE PLACEHOLDER (Inside Form, Below Button) ---
+                add_msg_placeholder = st.empty()
                 
                 if add_sub:
                     b_date_str = b_date.strftime("%Y-%m-%d")
                     if b_start >= b_end:
-                        st.error("Error: End time must be after Start.")
+                        add_msg_placeholder.error("❌ End time must be after Start.")
                     elif check_overlap(df, b_date_str, b_start, b_end):
-                        st.error("Error: Slot Overlap!")
+                        add_msg_placeholder.error("⚠️ Slot Overlap! Please check time.")
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
@@ -268,21 +267,23 @@ def main():
                         }])
                         save_data(pd.concat([df, new_row], ignore_index=True))
                         
-                        # Increment form_id to clear form for next time
                         st.session_state['form_id'] += 1
-                        st.session_state['expand_new'] = False
-                        st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
+                        st.session_state['expand_new'] = False  # Collapse form on success
+                        st.session_state['success_msg'] = f"✅ Booking Added for {b_name}!"
                         st.rerun()
 
-        # 2. UPCOMING BOOKINGS GRID
+        # 2. SUCCESS MESSAGE (Appears here after reload)
+        if st.session_state['success_msg']:
+            st.success(st.session_state['success_msg'])
+            st.session_state['success_msg'] = None
+
+        # 3. UPCOMING BOOKINGS GRID
         st.subheader("📅 Upcoming Bookings")
         
         if df.empty:
             st.info("No bookings found.")
         else:
             today = datetime.now().date()
-            
-            # SAFE FILTERING NOW (dt_obj exists)
             future_df = df[df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'])
             
             if future_df.empty:
@@ -324,14 +325,12 @@ def main():
                     st.session_state['edit_id'] = selected_db_id
                     st.rerun()
 
-        # 3. PAST HISTORY
+        # 4. PAST HISTORY
         with st.expander("📜 View Booking History"):
             if df.empty:
                 st.info("No past history.")
             else:
-                # SAFE FILTERING NOW (dt_obj exists)
                 past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
-                
                 if not past_df.empty:
                     past_df['S.No'] = range(1, len(past_df) + 1)
                     st.dataframe(
