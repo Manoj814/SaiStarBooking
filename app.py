@@ -122,7 +122,7 @@ def main():
         
         with st.form("edit_form"):
             c1, c2 = st.columns(2)
-            e_date = c1.date_input("Date", datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
+            e_date = c1.date_input("Date", value=datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
             e_name = c2.text_input("Name", value=record['booked_by'])
             
             time_slots = get_time_slots()
@@ -206,7 +206,10 @@ def main():
                 fid = st.session_state['form_id'] 
                 
                 c1, c2 = st.columns([1, 2])
-                b_date = c1.date_input("Date", key=f"date_{fid}", default=datetime.now().date())
+                
+                # --- FIXED LINE HERE: CHANGED 'default' to 'value' ---
+                b_date = c1.date_input("Date", key=f"date_{fid}", value=datetime.now().date())
+                
                 b_name = c2.text_input("Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
@@ -246,9 +249,7 @@ def main():
                         }])
                         save_data(pd.concat([df, new_row], ignore_index=True))
                         
-                        # --- THE FIX FOR THE CRASH ---
-                        # Instead of resetting values, we just increment the form ID.
-                        # This tells Streamlit to destroy the old widgets and make new ones.
+                        # Increment form_id to clear form for next time
                         st.session_state['form_id'] += 1
                         st.session_state['expand_new'] = False
                         st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
