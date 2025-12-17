@@ -1,6 +1,7 @@
-streamlit>=1.34.0
+streamlit
 pandas
 streamlit-gsheets
 xlsxwriter
+openpyxl
 
 
