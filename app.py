@@ -116,7 +116,7 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # --- MESSAGE BAR (Replaces Pop-ups for stability) ---
+    # --- MESSAGE BAR (Green/Red Notification at top) ---
     message_box = st.empty()
 
     # A. Success Logic
@@ -142,7 +142,7 @@ def main():
             
             time_slots = get_time_slots()
             
-            # --- FIX: Removed 'index=' to fix Session State Warning ---
+            # Note: Removed 'index=' to fix Session State warnings
             c1, c2, c3 = st.columns(3)
             b_start = c1.selectbox("Start Time", time_slots, format_func=convert_to_12h, key='f_start')
             b_end = c2.selectbox("End Time", time_slots, format_func=convert_to_12h, key='f_end')
@@ -306,6 +306,7 @@ def main():
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
+                    # --- VALIDATION ---
                     if e_start >= e_end:
                         message_box.error("❌ **Error:** End time must be after Start time.")
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
