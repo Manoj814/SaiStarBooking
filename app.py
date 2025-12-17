@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components # Required for scrolling
 import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
@@ -21,31 +20,22 @@ EXPECTED_HEADERS = [
 PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
 # -----------------------------------------------------------------------------
-# 2. HELPER FUNCTIONS
+# 2. POP-UP DIALOGS (MODALS)
 # -----------------------------------------------------------------------------
 
-@st.dialog("Booking Confirmation")
-def show_modal(message):
-    st.success(message)
-    st.write("You can close this window now.")
+@st.dialog("✅ Booking Confirmed")
+def show_success_modal(message):
+    st.write(message)
+    st.write("The record has been saved successfully.")
 
-def scroll_to_top():
-    """Injects JS to scroll the window to the top."""
-    js = """
-    <script>
-        var body = window.parent.document.body;
-        var retry = 0;
-        function scrollToTop() {
-            body.scrollTop = 0;
-            if (body.scrollTop !== 0 && retry < 5) {
-                retry++;
-                setTimeout(scrollToTop, 100);
-            }
-        }
-        scrollToTop();
-    </script>
-    """
-    components.html(js, height=0)
+@st.dialog("⚠️ Action Required")
+def show_error_modal(message):
+    st.error(message)
+    st.write("Please correct the details and try again.")
+
+# -----------------------------------------------------------------------------
+# 3. HELPER FUNCTIONS
+# -----------------------------------------------------------------------------
 
 def convert_to_12h(time_str):
     try:
@@ -140,24 +130,20 @@ def get_next_id(df):
     return 1 if df.empty else df['id'].max() + 1
 
 # -----------------------------------------------------------------------------
-# 3. MAIN APP
+# 4. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # --- A. Success Pop-up Logic (Top Priority) ---
+    # --- A. Success Pop-up Check (Must be first) ---
     if 'success_msg' in st.session_state:
-        show_modal(st.session_state['success_msg'])
+        show_success_modal(st.session_state['success_msg'])
         del st.session_state['success_msg']
     
-    # --- B. Error Message Placeholder ---
-    # We create a container at the very top to hold error messages
-    top_message = st.empty() 
-
-    # --- C. Reset Logic ---
+    # --- B. Reset Check ---
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
         st.session_state['trigger_reset'] = False 
     
-    # --- D. Initialization ---
+    # --- C. Initialization ---
     init_form_state()
     df = get_data()
 
@@ -197,17 +183,15 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # Validation Logic with Focus Scroll
+                # --- VALIDATION LOGIC (UPDATED TO USE MODAL) ---
                 if b_start >= b_end:
-                    top_message.error("❌ End time must be after Start time.")
-                    scroll_to_top() # <--- FORCE SCROLL TO TOP
+                    show_error_modal("❌ Invalid Time Range: End time must be after Start time.")
                 
                 elif check_overlap(df, b_date_str, b_start, b_end):
-                    top_message.error(f"⚠️ Overlap detected on {b_date_str}! Please choose a different slot.")
-                    scroll_to_top() # <--- FORCE SCROLL TO TOP
+                    show_error_modal(f"⚠️ Overlap Detected: A booking already exists on {b_date_str} during these hours.")
                 
                 else:
-                    # Validated - Proceed to Save
+                    # Validated - Save Data
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -234,7 +218,7 @@ def main():
                     save_data(updated_df)
                     
                     st.session_state['trigger_reset'] = True 
-                    st.session_state['success_msg'] = f"✅ Booking Confirmed for {booked_by}!"
+                    st.session_state['success_msg'] = f"New booking created for {booked_by}!"
                     st.rerun()
 
     st.markdown("---")
@@ -355,41 +339,20 @@ def main():
                 if st.button("🗑️ Delete Booking", key='del_btn'):
                     df_new = df[df['id'] != edit_id]
                     save_data(df_new)
-                    st.session_state['success_msg'] = "🗑️ Record Deleted."
+                    st.session_state['success_msg'] = "Record Deleted Successfully."
                     st.rerun()
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
-                    # Validation Checks using top_message + Scroll
+                    # --- VALIDATION LOGIC FOR EDIT (UPDATED TO USE MODAL) ---
                     if e_start >= e_end:
-                        top_message.error("❌ End time must be after Start time.")
-                        scroll_to_top() # <--- FORCE SCROLL
+                        show_error_modal("❌ Invalid Time: End time must be after Start time.")
+                    
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        top_message.error("⚠️ Overlap Detected! Please choose a different slot.")
-                        scroll_to_top() # <--- FORCE SCROLL
+                        show_error_modal("⚠️ Overlap Detected: Please choose a different slot.")
+                    
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
                         tot = dur * e_rate
-                        rem = tot - e_adv - e_bal_paid
-                        
-                        idx = df.index[df['id'] == edit_id][0]
-                        df.at[idx, 'booking_date'] = e_date_str
-                        df.at[idx, 'booked_by'] = e_name
-                        df.at[idx, 'start_time'] = e_start
-                        df.at[idx, 'end_time'] = e_end
-                        df.at[idx, 'total_hours'] = dur
-                        df.at[idx, 'rate_per_hour'] = e_rate
-                        df.at[idx, 'total_charges'] = tot
-                        df.at[idx, 'advance_paid'] = e_adv
-                        df.at[idx, 'balance_paid'] = e_bal_paid
-                        df.at[idx, 'advance_mode'] = e_mode
-                        df.at[idx, 'remaining_due'] = rem
-                        df.at[idx, 'remarks'] = e_remarks
-                        
-                        save_data(df)
-                        st.session_state['success_msg'] = "💾 Update Successful!"
-                        st.rerun()
-
-if __name__ == "__main__":
-    main()
+                        rem = tot - e_adv - e_
