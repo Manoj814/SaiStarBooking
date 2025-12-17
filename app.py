@@ -5,7 +5,7 @@ from streamlit_gsheets import GSheetsConnection
 import io
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & CONSTANTS (Must be first)
+# 1. PAGE CONFIG & CONSTANTS
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
 
@@ -20,10 +20,9 @@ EXPECTED_HEADERS = [
 PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
 # -----------------------------------------------------------------------------
-# 2. HELPER FUNCTIONS (Defined BEFORE main)
+# 2. HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 
-# Modal Dialog Function (Must be top level)
 @st.dialog("Booking Confirmation")
 def show_modal(message):
     st.success(message)
@@ -45,7 +44,6 @@ def get_time_slots():
     return slots
 
 def init_form_state():
-    """Initialize session state for form fields."""
     defaults = {
         'f_date': datetime.now().date(),
         'f_name': "",
@@ -62,7 +60,6 @@ def init_form_state():
             st.session_state[key] = val
 
 def reset_form_state():
-    """Clear form fields."""
     st.session_state['f_date'] = datetime.now().date()
     st.session_state['f_name'] = ""
     st.session_state['f_start'] = "20:00"
@@ -81,22 +78,18 @@ def get_data():
         if df.empty:
             return pd.DataFrame(columns=EXPECTED_HEADERS)
             
-        # Normalize Headers
         df.columns = [str(c).lower().strip() for c in df.columns]
 
-        # Add missing columns
         for col in EXPECTED_HEADERS:
             if col not in df.columns:
                 df[col] = "" 
 
-        # Cleanup Types
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
         
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
             
-        # Handle Text Columns
         text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
         for col in text_cols:
              df[col] = df[col].fillna("").astype(str)
@@ -128,26 +121,29 @@ def get_next_id(df):
     return 1 if df.empty else df['id'].max() + 1
 
 # -----------------------------------------------------------------------------
-# 3. MAIN APP (Runs last)
+# 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # --- Pop-up Logic ---
+    # --- A. Success Pop-up Logic (Top Priority) ---
     if 'success_msg' in st.session_state:
         show_modal(st.session_state['success_msg'])
         del st.session_state['success_msg']
     
-    # --- Reset Logic ---
+    # --- B. Error Message Placeholder (Ensures Errors appear at Top) ---
+    top_message = st.empty() # This creates a blank space at the very top
+
+    # --- C. Reset Logic ---
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
         st.session_state['trigger_reset'] = False 
     
-    # --- Initialize ---
-    init_form_state()  # This will work now because it is defined above
+    # --- D. Initialization ---
+    init_form_state()
     df = get_data()
 
     st.title("🏏 Cricket Academy Booking Manager")
 
-    # --- Section 1: New Booking ---
+    # --- Section 1: Create Booking ---
     with st.expander("➕ Create New Booking", expanded=True):
         with st.form("add_booking_form", clear_on_submit=False):
             col_date, col_name = st.columns([1, 2])
@@ -181,11 +177,13 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
+                # Validation Checks using top_message
                 if b_start >= b_end:
-                    st.error("❌ End time must be after Start time.")
+                    top_message.error("❌ End time must be after Start time.")
                 elif check_overlap(df, b_date_str, b_start, b_end):
-                    st.error(f"⚠️ Overlap detected on {b_date_str}!")
+                    top_message.error(f"⚠️ Overlap detected on {b_date_str}! Please choose a different slot.")
                 else:
+                    # Validated - Proceed to Save
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -338,10 +336,11 @@ def main():
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
+                    # Validation Checks using top_message
                     if e_start >= e_end:
-                        st.error("End Time Error")
+                        top_message.error("❌ End time must be after Start time.")
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        st.error("Overlap Detected!")
+                        top_message.error("⚠️ Overlap Detected! Please choose a different slot.")
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
