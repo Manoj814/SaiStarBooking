@@ -121,14 +121,15 @@ def show_confirmation(message):
 # --- Main App ---
 
 def main():
+    # --- 1. CHECK & SHOW MODAL (AT THE TOP) ---
+    if 'success_msg' in st.session_state:
+        show_modal(st.session_state['success_msg'])
+        del st.session_state['success_msg']
+    # ------------------------------------------
+    
     st.title("🏏 Cricket Academy Booking Manager")
 
-    # --- FIX START: Display Success Message from previous run ---
-    if 'success_msg' in st.session_state:
-        st.success(st.session_state['success_msg'])
-        del st.session_state['success_msg']
-    # --- FIX END ---
-    
+     
     # 1. HANDLE RESET
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
@@ -175,6 +176,9 @@ def main():
             submitted = st.form_submit_button("✅ Confirm Booking", type="primary")
 
             if submitted:
+                # ... save logic ...
+                 st.session_state['success_msg'] = f"✅ Booking Confirmed for {booked_by}!"
+                 st.rerun()
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
                 if b_start >= b_end:
@@ -406,5 +410,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
