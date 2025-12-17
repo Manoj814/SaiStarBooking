@@ -37,8 +37,9 @@ def get_time_slots():
 
 def init_form_state():
     """Initialize session state for form fields."""
+    # Note: We use .date() for f_date to ensure strictly DATE type, not DATETIME
     defaults = {
-        'f_date': datetime.now(),
+        'f_date': datetime.now().date(),
         'f_name': "",
         'f_start': "20:00", # Default 8 PM
         'f_end': "21:00",   # Default 9 PM
@@ -52,8 +53,8 @@ def init_form_state():
             st.session_state[key] = val
 
 def reset_form_state():
-    """Clear form fields after successful save."""
-    st.session_state['f_date'] = datetime.now()
+    """Clear form fields."""
+    st.session_state['f_date'] = datetime.now().date()
     st.session_state['f_name'] = ""
     st.session_state['f_start'] = "20:00"
     st.session_state['f_end'] = "21:00"
@@ -88,9 +89,12 @@ def save_data(df):
 
 def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
     if df.empty: return False
+    # Convert both to string to ensure safe comparison
     day_bookings = df[df['booking_date'].astype(str) == str(date_str)]
+    
     if exclude_id is not None:
         day_bookings = day_bookings[day_bookings['id'] != exclude_id]
+        
     if day_bookings.empty: return False
     
     overlap = day_bookings[
@@ -106,7 +110,15 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
+    # 1. HANDLE RESET (Must happen before widgets are drawn)
+    if st.session_state.get('trigger_reset', False):
+        reset_form_state()
+        st.session_state['trigger_reset'] = False # Turn off flag
+    
+    # 2. Initialize defaults
     init_form_state()
+    
+    # 3. Load Data
     df = get_data()
 
     # --- Section 1: New Booking ---
@@ -168,7 +180,9 @@ def main():
                     
                     updated_df = pd.concat([df, new_record], ignore_index=True)
                     save_data(updated_df)
-                    reset_form_state()
+                    
+                    # SUCCESS: Trigger reset for NEXT RUN and reload immediately
+                    st.session_state['trigger_reset'] = True 
                     st.success(f"Booking Confirmed for {booked_by}!")
                     st.rerun()
 
@@ -182,7 +196,7 @@ def main():
         df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
         today = datetime.now().date()
         
-        # 2. Filter Search globally first (optional, but good UX)
+        # 2. Filter Search globally first
         if search_query:
             filtered_df = df[
                 df['booked_by'].str.contains(search_query, case=False, na=False) | 
@@ -192,10 +206,7 @@ def main():
             filtered_df = df
 
         # 3. Split into Future/Past
-        # Future: Date >= Today
         future_df = filtered_df[filtered_df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'], ascending=[True, True])
-        
-        # Past: Date < Today
         past_df = filtered_df[filtered_df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
     else:
         future_df = pd.DataFrame()
