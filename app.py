@@ -3,11 +3,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 import io
+import os # Added to check if logo file exists
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
+st.set_page_config(page_title="Sai Star Booking Manager", layout="wide")
 
 # -----------------------------------------------------------------------------
 # 2. HELPER FUNCTIONS & CONFIG
@@ -93,7 +94,15 @@ def get_next_id(df):
 # 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    st.title("🏏 Cricket Academy Booking Manager")
+    # --- LOGO DISPLAY ---
+    logo_file = "Sai_Star_logo__2_-removebg-preview.png"
+    if os.path.exists(logo_file):
+        # Center the logo using columns
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.image(logo_file, use_container_width=True)
+    
+    st.title("🏏 Sai Star Booking Manager")
     
     # Init State
     init_session_state()
@@ -197,14 +206,19 @@ def main():
         # 1. ADD NEW BOOKING
         with st.expander("➕ Add New Booking", expanded=st.session_state['expand_new']):
             with st.form("add_form", clear_on_submit=False):
+                # We use a Dynamic ID (form_id) in the keys. 
+                # When we increment this ID, Streamlit creates fresh, empty widgets.
                 fid = st.session_state['form_id'] 
                 
                 c1, c2 = st.columns([1, 2])
+                
                 b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
+                
                 b_name = c2.text_input("Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
                 c3, c4, c5 = st.columns(3)
+                # Defaults: 20:00 (index 40) and 21:00 (index 42)
                 b_start = c3.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
                 b_end = c4.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
                 b_rate = c5.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
