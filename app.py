@@ -1,109 +1,73 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
+from streamlit_gsheets import GSheetsConnection
+import io
 
-# --- Configuration & Setup ---
+# --- Configuration ---
 st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
-DB_FILE = 'turf_bookings.db'
+
+# --- Constants ---
+EXPECTED_HEADERS = [
+    "id", "booking_date", "start_time", "end_time", 
+    "total_hours", "rate_per_hour", "total_charges", 
+    "booked_by", "advance_paid", "advance_mode", 
+    "balance_paid", "balance_mode", # New/Renamed fields
+    "remaining_due" # Calculated final pending
+]
 
 # --- Database Functions ---
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            booking_date TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            total_hours REAL,
-            rate_per_hour REAL,
-            total_charges REAL,
-            booked_by TEXT,
-            advance_paid REAL,
-            advance_mode TEXT,
-            pending_amount REAL,
-            pending_mode TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
 
-def check_overlap(date_str, start_str, end_str, exclude_id=None):
-    """
-    Checks if the time slot overlaps with existing bookings.
-    exclude_id is used when Editing (to ignore the record currently being edited).
-    """
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # Logic: New Start < Existing End AND New End > Existing Start
-    query = '''
-        SELECT count(*) FROM bookings 
-        WHERE booking_date = ? 
-        AND start_time < ? 
-        AND end_time > ?
-    '''
-    params = [date_str, end_str, start_str]
-    
-    if exclude_id:
-        query += " AND id != ?"
-        params.append(exclude_id)
+def get_data():
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    try:
+        df = conn.read(worksheet="Sheet1", ttl=0)
         
-    c.execute(query, tuple(params))
-    count = c.fetchone()[0]
-    conn.close()
-    return count > 0
+        if df.empty or len(df.columns) < len(EXPECTED_HEADERS):
+            return pd.DataFrame(columns=EXPECTED_HEADERS)
+            
+        # Type conversion
+        df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
+        cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
+        for col in cols_to_float:
+            # Check if col exists (for backward compatibility), if not create it with 0.0
+            if col not in df.columns:
+                df[col] = 0.0
+            else:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            
+        return df
+    except Exception:
+        return pd.DataFrame(columns=EXPECTED_HEADERS)
 
-def add_booking(data):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO bookings (booking_date, start_time, end_time, total_hours, 
-                              rate_per_hour, total_charges, booked_by, 
-                              advance_paid, advance_mode, pending_amount, pending_mode)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', data)
-    conn.commit()
-    conn.close()
+def save_data(df):
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    conn.update(worksheet="Sheet1", data=df)
 
-def update_booking(booking_id, data):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Unpack data (excluding ID)
-    (b_date, b_start, b_end, duration, rate, total, booked_by, adv, adv_mode, pend, pend_mode) = data
+def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
+    if df.empty:
+        return False
     
-    c.execute('''
-        UPDATE bookings 
-        SET booking_date=?, start_time=?, end_time=?, total_hours=?, 
-            rate_per_hour=?, total_charges=?, booked_by=?, 
-            advance_paid=?, advance_mode=?, pending_amount=?, pending_mode=?
-        WHERE id=?
-    ''', (*data, booking_id))
-    conn.commit()
-    conn.close()
+    # Ensure date comparison works by converting to string
+    day_bookings = df[df['booking_date'].astype(str) == str(date_str)]
+    
+    if exclude_id is not None:
+        day_bookings = day_bookings[day_bookings['id'] != exclude_id]
+        
+    if day_bookings.empty:
+        return False
+        
+    overlap = day_bookings[
+        (day_bookings['start_time'] < end_str) & 
+        (day_bookings['end_time'] > start_str)
+    ]
+    return not overlap.empty
 
-def delete_booking(booking_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
-    conn.commit()
-    conn.close()
+def get_next_id(df):
+    if df.empty:
+        return 1
+    return df['id'].max() + 1
 
-def get_all_bookings():
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM bookings ORDER BY booking_date DESC, start_time ASC", conn)
-    conn.close()
-    return df
-
-def get_booking_by_id(booking_id):
-    conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM bookings WHERE id = ?", conn, params=(booking_id,))
-    conn.close()
-    return df.iloc[0] if not df.empty else None
-
-# --- Helper: Generate 30 min slots ---
 def get_time_slots():
     slots = []
     start = datetime.strptime("00:00", "%H:%M")
@@ -115,163 +79,224 @@ def get_time_slots():
 
 # --- Main App ---
 def main():
-    init_db()
     st.title("🏏 Cricket Academy Booking Manager")
 
-    # --- Sidebar: Add New Booking ---
-    with st.sidebar:
-        st.header("➕ New Booking")
-        
+    # Load Data
+    df = get_data()
+
+    # --- Section 1: New Booking (Expander for Mobile Stability) ---
+    # We use st.expander instead of sidebar so it doesn't close on interaction
+    with st.expander("➕ Create New Booking", expanded=False):
         with st.form("add_booking_form", clear_on_submit=True):
-            b_date = st.date_input("Date", datetime.now())
+            col_date, col_name = st.columns([1, 2])
+            b_date = col_date.date_input("Date", datetime.now())
+            booked_by = col_name.text_input("Booked By (Name)")
             
             time_slots = get_time_slots()
-            # Default indices
             s_idx = time_slots.index("06:00") if "06:00" in time_slots else 0
             e_idx = time_slots.index("07:00") if "07:00" in time_slots else 1
             
-            c1, c2 = st.columns(2)
-            b_start = c1.selectbox("Start", time_slots, index=s_idx)
-            b_end = c2.selectbox("End", time_slots, index=e_idx)
+            c1, c2, c3 = st.columns(3)
+            b_start = c1.selectbox("Start Time", time_slots, index=s_idx)
+            b_end = c2.selectbox("End Time", time_slots, index=e_idx)
+            rate = c3.number_input("Rate/Hr (₹)", value=1000, step=100)
             
-            rate = st.number_input("Rate/Hr (₹)", value=1000, step=100)
-            booked_by = st.text_input("Booked By")
+            st.markdown("---")
+            st.caption("Payment Details")
+            p1, p2, p3 = st.columns(3)
+            adv_paid = p1.number_input("Advance Paid (₹)", value=0, step=100)
+            bal_paid = p2.number_input("Balance Paid Now (₹)", value=0, step=100, help="If they pay the remaining amount immediately")
             
-            st.divider()
-            adv_paid = st.number_input("Advance (₹)", value=0, step=100)
-            adv_mode = st.radio("Adv. Mode", ["Cash", "GPay"], horizontal=True)
-            pending_mode = st.selectbox("Pending Mode", ["Cash", "GPay", "Pending"])
+            adv_mode = p3.radio("Payment Mode", ["Cash", "GPay", "Pending"], horizontal=True)
             
-            submitted = st.form_submit_button("Confirm Booking")
+            submitted = st.form_submit_button("✅ Confirm Booking", type="primary")
 
             if submitted:
-                # Validation & Calc
+                b_date_str = b_date.strftime("%Y-%m-%d")
+                
                 if b_start >= b_end:
-                    st.error("End time must be after Start time.")
-                elif check_overlap(b_date, b_start, b_end):
-                    st.error(f"⚠️ Overlap detected on {b_date} ({b_start}-{b_end})")
+                    st.error("Error: End time must be after Start time.")
+                elif check_overlap(df, b_date_str, b_start, b_end):
+                    st.error(f"⚠️ Overlap! Ground already booked on {b_date_str} ({b_start}-{b_end})")
                 else:
+                    # Calculations
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
-                    pend = total - adv_paid
+                    # Logic: Total - Advance - BalancePaidNow = Remaining Due
+                    remaining = total - adv_paid - bal_paid
                     
-                    add_booking((b_date, b_start, b_end, dur, rate, total, booked_by, adv_paid, adv_mode, pend, pending_mode))
-                    st.success("Booking Added!")
-                    st.rerun()
+                    new_record = pd.DataFrame([{
+                        "id": get_next_id(df),
+                        "booking_date": b_date_str,
+                        "start_time": b_start,
+                        "end_time": b_end,
+                        "total_hours": dur,
+                        "rate_per_hour": rate,
+                        "total_charges": total,
+                        "booked_by": booked_by,
+                        "advance_paid": adv_paid,
+                        "advance_mode": adv_mode,
+                        "balance_paid": bal_paid, # New field
+                        "balance_mode": adv_mode, # Assuming same mode for simplicity, or "Pending"
+                        "remaining_due": remaining
+                    }])
+                    
+                    updated_df = pd.concat([df, new_record], ignore_index=True)
+                    save_data(updated_df)
+                    st.success(f"Booking Confirmed for {booked_by}!")
+                    st.rerun() # Refresh to show in table immediately
 
-    # --- Main Area ---
-    df = get_all_bookings()
+    st.markdown("---")
+
+    # --- Section 2: View, Search & Download ---
     
-    # Stats
+    # Search Bar
+    search_query = st.text_input("🔍 Search Bookings (Name or Date YYYY-MM-DD)", placeholder="Type name or date...")
+
+    # Filter Data based on Search
     if not df.empty:
-        total_rev = df['total_charges'].sum()
-        pending_rev = df['pending_amount'].sum()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Bookings", len(df))
-        c2.metric("Total Revenue", f"₹{total_rev:,.0f}")
-        c3.metric("Pending Collection", f"₹{pending_rev:,.0f}")
-    
-    st.divider()
-    
-    tab1, tab2 = st.tabs(["📅 Schedule View", "✏️ Edit / Delete"])
-    
-    # --- Tab 1: Table View ---
+        # Sort desc
+        display_df = df.sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
+        
+        if search_query:
+            display_df = display_df[
+                display_df['booked_by'].str.contains(search_query, case=False, na=False) | 
+                display_df['booking_date'].astype(str).str.contains(search_query, case=False, na=False)
+            ]
+    else:
+        display_df = pd.DataFrame()
+
+    # Stats Row
+    if not display_df.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Records Found", len(display_df))
+        c2.metric("Total Revenue", f"₹{display_df['total_charges'].sum():,.0f}")
+        c3.metric("Total Collected", f"₹{(display_df['advance_paid'].sum() + display_df['balance_paid'].sum()):,.0f}")
+        c4.metric("Outstanding Due", f"₹{display_df['remaining_due'].sum():,.0f}", delta_color="inverse")
+
+        # Excel Download Button
+        # We use BytesIO to create a file in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            display_df.to_excel(writer, index=False, sheet_name='Bookings')
+        excel_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Download Excel Grid",
+            data=excel_data,
+            file_name=f"turf_bookings_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    tab1, tab2 = st.tabs(["📅 Schedule Table", "✏️ Edit / Update Payment"])
+
     with tab1:
-        if df.empty:
-            st.info("No bookings yet.")
+        if display_df.empty:
+            st.info("No bookings found matching your criteria.")
         else:
-            display_df = df.copy()
-            # Beautify for display
-            display_df['total_charges'] = display_df['total_charges'].map('₹{:,.0f}'.format)
-            display_df['pending_amount'] = display_df['pending_amount'].map('₹{:,.0f}'.format)
-            display_df['booking_date'] = pd.to_datetime(display_df['booking_date']).dt.strftime('%Y-%m-%d')
+            # Visual formatting
+            show_df = display_df.copy()
+            show_df['booking_date'] = pd.to_datetime(show_df['booking_date']).dt.strftime('%Y-%m-%d')
+            show_df['total_charges'] = show_df['total_charges'].apply(lambda x: f"₹{x:,.0f}")
+            show_df['remaining_due'] = show_df['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
             
             st.dataframe(
-                display_df, 
+                show_df,
                 use_container_width=True,
                 column_config={
                     "id": "ID", "booking_date": "Date", "start_time": "Start",
-                    "end_time": "End", "total_hours": "Hrs", "booked_by": "Name",
-                    "advance_paid": "Adv", "pending_amount": "Pending"
+                    "end_time": "End", "booked_by": "Name",
+                    "total_hours": "Hrs", "advance_paid": "Adv",
+                    "balance_paid": "Bal Paid",
+                    "remaining_due": "Due"
                 },
                 hide_index=True
             )
 
-    # --- Tab 2: Edit / Delete ---
     with tab2:
         if df.empty:
-            st.write("No records to edit.")
+            st.write("No records available.")
         else:
-            # 1. Select Record
-            df['label'] = df['booking_date'].astype(str) + " | " + df['start_time'] + " - " + df['booked_by']
-            edit_id = st.selectbox("Select Booking to Edit/Delete", options=df['id'], format_func=lambda x: df[df['id'] == x]['label'].values[0])
+            # Edit Dropdown
+            df['label'] = df['id'].astype(str) + " | " + df['booking_date'].astype(str) + " (" + df['start_time'] + ") - " + df['booked_by']
             
-            # 2. Get Current Data
-            record = get_booking_by_id(edit_id)
-            
-            if record is not None:
-                st.subheader(f"Editing Booking #{edit_id} - {record['booked_by']}")
+            # Filter dropdown if search is active, otherwise show all
+            if search_query:
+                options = df[df['id'].isin(display_df['id'])]['id']
+            else:
+                options = df['id']
+                
+            if options.empty:
+                st.warning("No records match search.")
+            else:
+                edit_id = st.selectbox("Select Booking to Edit", options=options, format_func=lambda x: df[df['id'] == x]['label'].values[0])
+                
+                # Get Record
+                record = df[df['id'] == edit_id].iloc[0]
                 
                 with st.form("edit_form"):
-                    col_a, col_b = st.columns(2)
+                    st.subheader(f"Edit: {record['booked_by']}")
                     
-                    # Pre-fill Date
-                    e_date = col_a.date_input("Date", datetime.strptime(record['booking_date'], '%Y-%m-%d'))
+                    c_a, c_b = st.columns(2)
+                    e_date = c_a.date_input("Date", datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
+                    e_name = c_b.text_input("Name", value=record['booked_by'])
                     
-                    # Pre-fill Time
                     time_slots = get_time_slots()
                     try:
                         s_idx = time_slots.index(record['start_time'])
                         e_idx = time_slots.index(record['end_time'])
-                    except:
-                        s_idx, e_idx = 0, 1
-                        
-                    e_start = col_a.selectbox("Start", time_slots, index=s_idx, key='e_start')
-                    e_end = col_b.selectbox("End", time_slots, index=e_idx, key='e_end')
+                    except: s_idx, e_idx = 0, 1
                     
-                    e_rate = col_a.number_input("Rate/Hr", value=float(record['rate_per_hour']))
-                    e_name = col_b.text_input("Booked By", value=record['booked_by'])
+                    e_start = c_a.selectbox("Start", time_slots, index=s_idx, key='es')
+                    e_end = c_b.selectbox("End", time_slots, index=e_idx, key='ee')
+                    e_rate = c_a.number_input("Rate", value=float(record['rate_per_hour']))
                     
-                    st.markdown("---")
-                    e_adv = col_a.number_input("Advance Paid", value=float(record['advance_paid']))
+                    st.divider()
+                    st.write("**Payment Status Update**")
+                    pa, pb = st.columns(2)
+                    e_adv = pa.number_input("Advance Paid", value=float(record['advance_paid']))
+                    e_bal_paid = pb.number_input("Balance Amount Paid", value=float(record['balance_paid']))
                     
-                    # Map radio index
-                    adv_opts = ["Cash", "GPay"]
-                    adv_idx = adv_opts.index(record['advance_mode']) if record['advance_mode'] in adv_opts else 0
-                    e_adv_mode = col_b.radio("Adv Mode", adv_opts, index=adv_idx, horizontal=True)
-                    
-                    # Map pending index
-                    pen_opts = ["Cash", "GPay", "Pending"]
-                    pen_idx = pen_opts.index(record['pending_mode']) if record['pending_mode'] in pen_opts else 2
-                    e_pen_mode = st.selectbox("Pending Bal. Mode", pen_opts, index=pen_idx)
-                    
-                    c_upd, c_del = st.columns([1,1])
-                    update_btn = c_upd.form_submit_button("💾 Update Record", type="primary")
-                    # Note: Delete inside a form is tricky, so we do it outside or use a trick.
-                    # Ideally separate forms, but for simplicity, we focus on Update here.
-                
-                # Delete Button (Outside form to avoid validation clashes)
-                if st.button("🗑️ Delete This Record"):
-                    delete_booking(edit_id)
-                    st.success("Deleted!")
+                    e_mode = st.radio("Payment Mode", ["Cash", "GPay", "Pending"], horizontal=True, index=0)
+
+                    upd_submit = st.form_submit_button("💾 Save Changes", type="primary")
+
+                # Delete Button
+                if st.button("🗑️ Delete Booking", key='del_btn'):
+                    df_new = df[df['id'] != edit_id]
+                    save_data(df_new)
+                    st.success("Record Deleted.")
                     st.rerun()
 
-                if update_btn:
-                    # Logic
+                if upd_submit:
+                    e_date_str = e_date.strftime("%Y-%m-%d")
                     if e_start >= e_end:
-                        st.error("End time must be after Start time.")
-                    # Check overlap EXCLUDING current ID
-                    elif check_overlap(e_date, e_start, e_end, exclude_id=edit_id):
-                        st.error("⚠️ Overlap with another booking!")
+                        st.error("End Time Error")
+                    elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
+                        st.error("Overlap Detected!")
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
                         tot = dur * e_rate
-                        pen = tot - e_adv
+                        rem = tot - e_adv - e_bal_paid
                         
-                        update_booking(edit_id, (e_date, e_start, e_end, dur, e_rate, tot, e_name, e_adv, e_adv_mode, pen, e_pen_mode))
-                        st.success("Record Updated Successfully!")
+                        # Update
+                        idx = df.index[df['id'] == edit_id][0]
+                        df.at[idx, 'booking_date'] = e_date_str
+                        df.at[idx, 'booked_by'] = e_name
+                        df.at[idx, 'start_time'] = e_start
+                        df.at[idx, 'end_time'] = e_end
+                        df.at[idx, 'total_hours'] = dur
+                        df.at[idx, 'rate_per_hour'] = e_rate
+                        df.at[idx, 'total_charges'] = tot
+                        df.at[idx, 'advance_paid'] = e_adv
+                        df.at[idx, 'balance_paid'] = e_bal_paid
+                        df.at[idx, 'advance_mode'] = e_mode
+                        df.at[idx, 'remaining_due'] = rem
+                        
+                        save_data(df)
+                        st.success("Updated Successfully!")
                         st.rerun()
 
 if __name__ == "__main__":
