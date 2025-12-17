@@ -96,18 +96,13 @@ def main():
     # --- CSS: REMOVE TOP WHITESPACE & HEADER BAR ---
     st.markdown("""
         <style>
-               /* Remove top padding from the main container */
                .block-container {
                     padding-top: 0rem !important;
                     padding-bottom: 0rem !important;
                     padding-left: 2rem;
                     padding-right: 2rem;
                 }
-               /* Optional: Hide the top hamburger menu bar to gain even more space. 
-                  Comment this out if you need the Settings menu. */
                header {visibility: hidden;} 
-               
-               /* Reduce gap between elements */
                div[data-testid="stVerticalBlock"] > div {
                     gap: 0.5rem;
                }
@@ -117,12 +112,10 @@ def main():
     # --- LOGO (Acts as Header) ---
     logo_file = "Sai_Star_logo__2_-removebg-preview.png"
     if os.path.exists(logo_file):
-        # Center the logo, occupy less width so it's not huge
         c1, c2, c3 = st.columns([3, 2, 3])
         with c2:
             st.image(logo_file, use_container_width=True)
     else:
-        # Fallback text if image missing
         st.markdown("<h2 style='text-align: center;'>🏏 Sai Star Booking Manager</h2>", unsafe_allow_html=True)
     
     # Init State
@@ -136,6 +129,12 @@ def main():
 
     # Load Data
     df = get_data()
+
+    # --- PRE-PROCESS DATE (CRITICAL FIX) ---
+    # We must calculate dt_obj here so it is available for ALL sections below
+    if not df.empty:
+        df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
+    # ---------------------------------------
 
     # ---------------------------------------------------------
     # PART A: EDIT SCREEN (Only visible if a row is selected)
@@ -227,19 +226,14 @@ def main():
         # 1. ADD NEW BOOKING
         with st.expander("➕ Add New Booking", expanded=st.session_state['expand_new']):
             with st.form("add_form", clear_on_submit=False):
-                # We use a Dynamic ID (form_id) in the keys. 
-                # When we increment this ID, Streamlit creates fresh, empty widgets.
                 fid = st.session_state['form_id'] 
                 
                 c1, c2 = st.columns([1, 2])
-                
                 b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
-                
                 b_name = c2.text_input("Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
                 c3, c4, c5 = st.columns(3)
-                # Defaults: 20:00 (index 40) and 21:00 (index 42)
                 b_start = c3.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
                 b_end = c4.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
                 b_rate = c5.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
@@ -286,9 +280,9 @@ def main():
         if df.empty:
             st.info("No bookings found.")
         else:
-            df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
             today = datetime.now().date()
             
+            # SAFE FILTERING NOW (dt_obj exists)
             future_df = df[df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'])
             
             if future_df.empty:
@@ -332,21 +326,26 @@ def main():
 
         # 3. PAST HISTORY
         with st.expander("📜 View Booking History"):
-            past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
-            if not past_df.empty:
-                past_df['S.No'] = range(1, len(past_df) + 1)
-                st.dataframe(
-                    past_df,
-                    column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "total_charges"],
-                    hide_index=True,
-                    use_container_width=True
-                )
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False)
-                st.download_button("📥 Download Full Excel", output.getvalue(), "bookings.xlsx")
-            else:
+            if df.empty:
                 st.info("No past history.")
+            else:
+                # SAFE FILTERING NOW (dt_obj exists)
+                past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
+                
+                if not past_df.empty:
+                    past_df['S.No'] = range(1, len(past_df) + 1)
+                    st.dataframe(
+                        past_df,
+                        column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "total_charges"],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False)
+                    st.download_button("📥 Download Full Excel", output.getvalue(), "bookings.xlsx")
+                else:
+                    st.info("No past history.")
 
 if __name__ == "__main__":
     main()
