@@ -12,8 +12,8 @@ EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
     "booked_by", "advance_paid", "advance_mode", 
-    "balance_paid", "balance_mode", # New/Renamed fields
-    "remaining_due" # Calculated final pending
+    "balance_paid", "balance_mode", 
+    "remaining_due"
 ]
 
 # --- Database Functions ---
@@ -23,14 +23,16 @@ def get_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
         
+        # Initialize empty if needed
         if df.empty or len(df.columns) < len(EXPECTED_HEADERS):
             return pd.DataFrame(columns=EXPECTED_HEADERS)
             
-        # Type conversion
+        # 1. Clean IDs: Ensure they are Integers (removes decimals/strings)
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
+        
+        # 2. Clean Numbers: Ensure floats for calculations
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
-            # Check if col exists (for backward compatibility), if not create it with 0.0
             if col not in df.columns:
                 df[col] = 0.0
             else:
@@ -48,7 +50,7 @@ def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
     if df.empty:
         return False
     
-    # Ensure date comparison works by converting to string
+    # Convert date to string for comparison
     day_bookings = df[df['booking_date'].astype(str) == str(date_str)]
     
     if exclude_id is not None:
@@ -57,6 +59,7 @@ def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
     if day_bookings.empty:
         return False
         
+    # Logic: (StartA < EndB) and (EndA > StartB)
     overlap = day_bookings[
         (day_bookings['start_time'] < end_str) & 
         (day_bookings['end_time'] > start_str)
@@ -84,8 +87,7 @@ def main():
     # Load Data
     df = get_data()
 
-    # --- Section 1: New Booking (Expander for Mobile Stability) ---
-    # We use st.expander instead of sidebar so it doesn't close on interaction
+    # --- Section 1: New Booking ---
     with st.expander("➕ Create New Booking", expanded=False):
         with st.form("add_booking_form", clear_on_submit=True):
             col_date, col_name = st.columns([1, 2])
@@ -105,7 +107,7 @@ def main():
             st.caption("Payment Details")
             p1, p2, p3 = st.columns(3)
             adv_paid = p1.number_input("Advance Paid (₹)", value=0, step=100)
-            bal_paid = p2.number_input("Balance Paid Now (₹)", value=0, step=100, help="If they pay the remaining amount immediately")
+            bal_paid = p2.number_input("Balance Paid Now (₹)", value=0, step=100)
             
             adv_mode = p3.radio("Payment Mode", ["Cash", "GPay", "Pending"], horizontal=True)
             
@@ -123,7 +125,6 @@ def main():
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
-                    # Logic: Total - Advance - BalancePaidNow = Remaining Due
                     remaining = total - adv_paid - bal_paid
                     
                     new_record = pd.DataFrame([{
@@ -137,26 +138,24 @@ def main():
                         "booked_by": booked_by,
                         "advance_paid": adv_paid,
                         "advance_mode": adv_mode,
-                        "balance_paid": bal_paid, # New field
-                        "balance_mode": adv_mode, # Assuming same mode for simplicity, or "Pending"
+                        "balance_paid": bal_paid,
+                        "balance_mode": adv_mode,
                         "remaining_due": remaining
                     }])
                     
                     updated_df = pd.concat([df, new_record], ignore_index=True)
                     save_data(updated_df)
                     st.success(f"Booking Confirmed for {booked_by}!")
-                    st.rerun() # Refresh to show in table immediately
+                    st.rerun()
 
     st.markdown("---")
 
-    # --- Section 2: View, Search & Download ---
+    # --- Section 2: View & Manage ---
     
-    # Search Bar
-    search_query = st.text_input("🔍 Search Bookings (Name or Date YYYY-MM-DD)", placeholder="Type name or date...")
+    search_query = st.text_input("🔍 Search Bookings (Name or Date YYYY-MM-DD)", placeholder="Type name...")
 
-    # Filter Data based on Search
+    # Filter Data for Display
     if not df.empty:
-        # Sort desc
         display_df = df.sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
         
         if search_query:
@@ -167,16 +166,15 @@ def main():
     else:
         display_df = pd.DataFrame()
 
-    # Stats Row
+    # Metrics
     if not display_df.empty:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Records Found", len(display_df))
         c2.metric("Total Revenue", f"₹{display_df['total_charges'].sum():,.0f}")
-        c3.metric("Total Collected", f"₹{(display_df['advance_paid'].sum() + display_df['balance_paid'].sum()):,.0f}")
-        c4.metric("Outstanding Due", f"₹{display_df['remaining_due'].sum():,.0f}", delta_color="inverse")
+        c3.metric("Collected", f"₹{(display_df['advance_paid'].sum() + display_df['balance_paid'].sum()):,.0f}")
+        c4.metric("Due", f"₹{display_df['remaining_due'].sum():,.0f}", delta_color="inverse")
 
-        # Excel Download Button
-        # We use BytesIO to create a file in memory
+        # Excel Download
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             display_df.to_excel(writer, index=False, sheet_name='Bookings')
@@ -193,9 +191,8 @@ def main():
 
     with tab1:
         if display_df.empty:
-            st.info("No bookings found matching your criteria.")
+            st.info("No bookings found.")
         else:
-            # Visual formatting
             show_df = display_df.copy()
             show_df['booking_date'] = pd.to_datetime(show_df['booking_date']).dt.strftime('%Y-%m-%d')
             show_df['total_charges'] = show_df['total_charges'].apply(lambda x: f"₹{x:,.0f}")
@@ -207,9 +204,7 @@ def main():
                 column_config={
                     "id": "ID", "booking_date": "Date", "start_time": "Start",
                     "end_time": "End", "booked_by": "Name",
-                    "total_hours": "Hrs", "advance_paid": "Adv",
-                    "balance_paid": "Bal Paid",
-                    "remaining_due": "Due"
+                    "total_hours": "Hrs", "remaining_due": "Due"
                 },
                 hide_index=True
             )
@@ -218,21 +213,33 @@ def main():
         if df.empty:
             st.write("No records available.")
         else:
-            # Edit Dropdown
-            df['label'] = df['id'].astype(str) + " | " + df['booking_date'].astype(str) + " (" + df['start_time'] + ") - " + df['booked_by']
-            
-            # Filter dropdown if search is active, otherwise show all
+            # --- FIX: Create a Dictionary for Safe Lookup ---
+            # This creates a map: {1: "2023-10-01 (06:00) - John", 2: ...}
+            # This prevents the "IndexError" crash.
+            df['label'] = (
+                df['booking_date'].astype(str) + " (" + 
+                df['start_time'].astype(str) + ") - " + 
+                df['booked_by'].astype(str)
+            )
+            id_to_label = dict(zip(df['id'], df['label']))
+
+            # Determine Options (Filtered if searching, else All)
             if search_query:
-                options = df[df['id'].isin(display_df['id'])]['id']
+                options = df[df['id'].isin(display_df['id'])]['id'].tolist()
             else:
-                options = df['id']
+                options = df['id'].tolist()
                 
-            if options.empty:
-                st.warning("No records match search.")
+            if not options:
+                st.warning("No records match your search to edit.")
             else:
-                edit_id = st.selectbox("Select Booking to Edit", options=options, format_func=lambda x: df[df['id'] == x]['label'].values[0])
+                # Use the dictionary to get the label safely
+                edit_id = st.selectbox(
+                    "Select Booking to Edit", 
+                    options=options, 
+                    format_func=lambda x: id_to_label.get(x, f"ID: {x}")
+                )
                 
-                # Get Record
+                # Fetch Record
                 record = df[df['id'] == edit_id].iloc[0]
                 
                 with st.form("edit_form"):
@@ -271,8 +278,10 @@ def main():
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
+                    
                     if e_start >= e_end:
                         st.error("End Time Error")
+                    # Check overlap (exclude current ID)
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
                         st.error("Overlap Detected!")
                     else:
@@ -281,7 +290,7 @@ def main():
                         tot = dur * e_rate
                         rem = tot - e_adv - e_bal_paid
                         
-                        # Update
+                        # Update using Index
                         idx = df.index[df['id'] == edit_id][0]
                         df.at[idx, 'booking_date'] = e_date_str
                         df.at[idx, 'booked_by'] = e_name
