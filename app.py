@@ -37,33 +37,23 @@ def get_time_slots():
     return slots
 
 def init_session_state():
-    # Form defaults
-    defaults = {
-        'f_date': datetime.now().date(),
-        'f_name': "",
-        'f_start': "20:00", 'f_end': "21:00",
-        'f_fees': 1000.0, 'f_adv': 0.0, 'f_bal': 0.0,
-        'f_mode': "Cash", 'f_remarks': "",
-        # App State
-        'expand_new': False,       # Controls if "Add New" is open/closed
-        'edit_mode': False,        # Controls if we are editing
-        'edit_id': None,           # ID being edited
-        'success_msg': None        # Message to show after reload
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
+    # App State Initialization
+    if 'form_id' not in st.session_state:
+        st.session_state['form_id'] = 0  # Unique ID to control form resets
+    
+    if 'expand_new' not in st.session_state:
+        st.session_state['expand_new'] = False
+        
+    if 'edit_mode' not in st.session_state:
+        st.session_state['edit_mode'] = False
+        st.session_state['edit_id'] = None
+        
+    if 'success_msg' not in st.session_state:
+        st.session_state['success_msg'] = None
 
-def reset_form_state():
-    st.session_state['f_date'] = datetime.now().date()
-    st.session_state['f_name'] = ""
-    st.session_state['f_start'] = "20:00"
-    st.session_state['f_end'] = "21:00"
-    st.session_state['f_fees'] = 1000.0
-    st.session_state['f_adv'] = 0.0
-    st.session_state['f_bal'] = 0.0
-    st.session_state['f_mode'] = "Cash"
-    st.session_state['f_remarks'] = ""
+    if 'last_action' not in st.session_state:
+        st.session_state['last_action'] = None
+        st.session_state['last_msg'] = None
 
 # --- GOOGLE SHEETS FUNCTIONS ---
 def get_data():
@@ -208,24 +198,29 @@ def main():
     # PART B: MAIN GRID SCREEN (Visible if NOT editing)
     # ---------------------------------------------------------
     else:
-        # 1. ADD NEW BOOKING (Collapsed by default)
+        # 1. ADD NEW BOOKING
         with st.expander("➕ Add New Booking", expanded=st.session_state['expand_new']):
             with st.form("add_form", clear_on_submit=False):
+                # We use a Dynamic ID (form_id) in the keys. 
+                # When we increment this ID, Streamlit creates fresh, empty widgets.
+                fid = st.session_state['form_id'] 
+                
                 c1, c2 = st.columns([1, 2])
-                b_date = c1.date_input("Date", key='f_date')
-                b_name = c2.text_input("Name", key='f_name')
+                b_date = c1.date_input("Date", key=f"date_{fid}", default=datetime.now().date())
+                b_name = c2.text_input("Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
                 c3, c4, c5 = st.columns(3)
-                b_start = c3.selectbox("Start", time_slots, format_func=convert_to_12h, key='f_start')
-                b_end = c4.selectbox("End", time_slots, format_func=convert_to_12h, key='f_end')
-                b_rate = c5.number_input("Fees", step=100.0, key='f_fees')
+                # Defaults: 20:00 (index 40) and 21:00 (index 42)
+                b_start = c3.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
+                b_end = c4.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
+                b_rate = c5.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
                 
                 c6, c7, c8 = st.columns(3)
-                b_adv = c6.number_input("Advance", step=100.0, key='f_adv')
-                b_bal = c7.number_input("Balance Paid", step=100.0, key='f_bal')
-                b_mode = c8.selectbox("Mode", PAYMENT_MODES, key='f_mode')
-                b_rem = st.text_input("Remarks", key='f_remarks')
+                b_adv = c6.number_input("Advance", step=100.0, key=f"adv_{fid}")
+                b_bal = c7.number_input("Balance Paid", step=100.0, key=f"bal_{fid}")
+                b_mode = c8.selectbox("Mode", PAYMENT_MODES, key=f"mode_{fid}")
+                b_rem = st.text_input("Remarks", key=f"rem_{fid}")
                 
                 add_sub = st.form_submit_button("✅ Confirm Booking", type="primary")
                 
@@ -251,8 +246,10 @@ def main():
                         }])
                         save_data(pd.concat([df, new_row], ignore_index=True))
                         
-                        # Reset form and collapse expander
-                        reset_form_state()
+                        # --- THE FIX FOR THE CRASH ---
+                        # Instead of resetting values, we just increment the form ID.
+                        # This tells Streamlit to destroy the old widgets and make new ones.
+                        st.session_state['form_id'] += 1
                         st.session_state['expand_new'] = False
                         st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
                         st.rerun()
@@ -265,11 +262,9 @@ def main():
         if df.empty:
             st.info("No bookings found.")
         else:
-            # Prepare Data
             df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
             today = datetime.now().date()
             
-            # Filter Future
             future_df = df[df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'])
             
             if future_df.empty:
@@ -277,13 +272,11 @@ def main():
             else:
                 st.caption("👆 **Click on any row to Edit or Delete**")
                 
-                # Format for Display
                 display_df = future_df.copy()
-                display_df['S.No'] = range(1, len(display_df) + 1) # Generate Serial Numbers 1, 2, 3...
+                display_df['S.No'] = range(1, len(display_df) + 1)
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
-                # Configure Columns
                 grid_cols = {
                     "S.No": st.column_config.NumberColumn("S.No", width="small"),
                     "booking_date": "Date",
@@ -296,29 +289,24 @@ def main():
                     "remarks": "Remarks"
                 }
                 
-                # Show Grid with Selection
                 event = st.dataframe(
                     display_df,
                     column_config=grid_cols,
                     column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"],
                     use_container_width=True,
                     hide_index=True,
-                    on_select="rerun",           # Make row selection trigger a rerun
-                    selection_mode="single-row"  # Only allow one row
+                    on_select="rerun",
+                    selection_mode="single-row"
                 )
 
-                # Handle Selection
                 if event.selection.rows:
                     selected_index = event.selection.rows[0]
-                    # Get the actual Database ID (not the S.No)
                     selected_db_id = display_df.iloc[selected_index]['id']
-                    
-                    # Set State to Edit Mode
                     st.session_state['edit_mode'] = True
                     st.session_state['edit_id'] = selected_db_id
                     st.rerun()
 
-        # 3. PAST HISTORY (Read Only)
+        # 3. PAST HISTORY
         with st.expander("📜 View Booking History"):
             past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
             if not past_df.empty:
@@ -329,8 +317,6 @@ def main():
                     hide_index=True,
                     use_container_width=True
                 )
-                
-                # Excel Download
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False)
