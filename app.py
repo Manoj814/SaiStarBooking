@@ -106,7 +106,7 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # --- NOTIFICATION BAR (Replaces Pop-ups) ---
+    # --- MESSAGE CENTER (Replaces Pop-ups for stability) ---
     message_box = st.empty()
 
     # A. Success Logic (After Reload)
@@ -152,7 +152,7 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # --- VALIDATION (Send errors to the top message box) ---
+                # --- VALIDATION (Send errors to top message box) ---
                 if b_start >= b_end:
                     message_box.error("❌ **Error:** End time must be after Start time.")
                 elif check_overlap(df, b_date_str, b_start, b_end):
