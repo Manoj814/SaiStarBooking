@@ -4,11 +4,18 @@ from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 import io
 
-# --- Configuration ---
+# 1. Page Configuration (MUST be the first Streamlit command)
 st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
 
-# --- Constants ---
-# Added 'remarks' to headers
+# 2. Define the Pop-up Function (MUST be outside main)
+# Note: This requires Streamlit version 1.34+. 
+# If you get an error like "no attribute dialog", update requirements.txt to streamlit>=1.34.0
+@st.dialog("Booking Confirmation")
+def show_modal(message):
+    st.success(message)
+    st.write("You can close this window now.")
+
+# --- Constants & Helper Functions (Keep your existing ones here) ---
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
@@ -16,118 +23,27 @@ EXPECTED_HEADERS = [
     "balance_paid", "balance_mode", 
     "remaining_due", "remarks"
 ]
-
-# Updated Payment Modes as per your request
 PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
-# --- Helper Functions ---
-
 def convert_to_12h(time_str):
-    """Converts '14:00' to '02:00 PM'."""
     try:
         return datetime.strptime(time_str, "%H:%M").strftime("%I:%M %p")
     except:
         return time_str
 
-def get_time_slots():
-    """Returns list of 24h strings ['00:00', '00:30'...]"""
-    slots = []
-    start = datetime.strptime("00:00", "%H:%M")
-    end = datetime.strptime("23:30", "%H:%M")
-    while start <= end:
-        slots.append(start.strftime("%H:%M"))
-        start += timedelta(minutes=30)
-    return slots
+# ... (Include your other helper functions: get_time_slots, init_form_state, etc.) ...
 
-def init_form_state():
-    """Initialize session state for form fields."""
-    defaults = {
-        'f_date': datetime.now().date(),
-        'f_name': "",
-        'f_start': "20:00", 
-        'f_end': "21:00",   
-        'f_fees': 1000.0,
-        'f_adv': 0.0,
-        'f_bal': 0.0,
-        'f_mode': "Cash",
-        'f_remarks': ""  # Added remarks default
-    }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
-
-def reset_form_state():
-    """Clear form fields."""
-    st.session_state['f_date'] = datetime.now().date()
-    st.session_state['f_name'] = ""
-    st.session_state['f_start'] = "20:00"
-    st.session_state['f_end'] = "21:00"
-    st.session_state['f_fees'] = 1000.0
-    st.session_state['f_adv'] = 0.0
-    st.session_state['f_bal'] = 0.0
-    st.session_state['f_mode'] = "Cash"
-    st.session_state['f_remarks'] = "" # Reset remarks
-
-# --- Database Functions ---
-
-def get_data():
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    try:
-        df = conn.read(worksheet="Sheet1", ttl=0)
-        if df.empty or len(df.columns) < len(EXPECTED_HEADERS):
-            return pd.DataFrame(columns=EXPECTED_HEADERS)
-            
-        # Cleanup Types
-        df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
-        cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
-        for col in cols_to_float:
-            if col not in df.columns: df[col] = 0.0
-            else: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-        
-        # Ensure remarks column exists
-        if 'remarks' not in df.columns:
-            df['remarks'] = ""
-            
-        return df
-    except Exception:
-        return pd.DataFrame(columns=EXPECTED_HEADERS)
-
-def save_data(df):
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    conn.update(worksheet="Sheet1", data=df)
-
-def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
-    if df.empty: return False
-    day_bookings = df[df['booking_date'].astype(str) == str(date_str)]
-    
-    if exclude_id is not None:
-        day_bookings = day_bookings[day_bookings['id'] != exclude_id]
-        
-    if day_bookings.empty: return False
-    
-    overlap = day_bookings[
-        (day_bookings['start_time'] < end_str) & 
-        (day_bookings['end_time'] > start_str)
-    ]
-    return not overlap.empty
-
-def get_next_id(df):
-    return 1 if df.empty else df['id'].max() + 1
-
-@st.dialog("Success")
-def show_confirmation(message):
-    st.write(message)
-    # The user can click outside or close to dismiss
 # --- Main App ---
-
 def main():
-    # --- 1. CHECK & SHOW MODAL (AT THE TOP) ---
+    # 3. Check for Success Message immediately at start of main
     if 'success_msg' in st.session_state:
+        # Call the function defined above
         show_modal(st.session_state['success_msg'])
         del st.session_state['success_msg']
-    # ------------------------------------------
-    
+
     st.title("🏏 Cricket Academy Booking Manager")
+    
+    # ... (Rest of your main function logic continues here) ...
 
      
     # 1. HANDLE RESET
@@ -410,6 +326,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
