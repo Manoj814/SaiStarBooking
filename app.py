@@ -20,21 +20,7 @@ EXPECTED_HEADERS = [
 PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
 # -----------------------------------------------------------------------------
-# 2. POP-UP DIALOGS (MODALS)
-# -----------------------------------------------------------------------------
-
-@st.dialog("✅ Booking Confirmed")
-def show_success_modal(message):
-    st.write(message)
-    st.write("The record has been saved successfully.")
-
-@st.dialog("⚠️ Action Required")
-def show_error_modal(message):
-    st.error(message)
-    st.write("Please correct the details and try again.")
-
-# -----------------------------------------------------------------------------
-# 3. HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS
 # -----------------------------------------------------------------------------
 
 def convert_to_12h(time_str):
@@ -130,24 +116,28 @@ def get_next_id(df):
     return 1 if df.empty else df['id'].max() + 1
 
 # -----------------------------------------------------------------------------
-# 4. MAIN APP
+# 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # --- A. Success Pop-up Check (Must be first) ---
+    st.title("🏏 Cricket Academy Booking Manager")
+
+    # --- MESSAGE CENTER (Top of Page) ---
+    # This acts like a notification bar that is always visible at the top
+    message_container = st.empty()
+
+    # 1. Show Success Message from Session State (e.g., after reload)
     if 'success_msg' in st.session_state:
-        show_success_modal(st.session_state['success_msg'])
+        message_container.success(f"✅ {st.session_state['success_msg']}")
         del st.session_state['success_msg']
     
-    # --- B. Reset Check ---
+    # 2. Reset Trigger
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
         st.session_state['trigger_reset'] = False 
     
-    # --- C. Initialization ---
+    # 3. Initialization
     init_form_state()
     df = get_data()
-
-    st.title("🏏 Cricket Academy Booking Manager")
 
     # --- Section 1: Create Booking ---
     with st.expander("➕ Create New Booking", expanded=True):
@@ -183,15 +173,15 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # --- VALIDATION LOGIC (UPDATED TO USE MODAL) ---
+                # --- VALIDATION (Display Errors at Top) ---
                 if b_start >= b_end:
-                    show_error_modal("❌ Invalid Time Range: End time must be after Start time.")
+                    message_container.error("❌ **Error:** End time must be after Start time.")
                 
                 elif check_overlap(df, b_date_str, b_start, b_end):
-                    show_error_modal(f"⚠️ Overlap Detected: A booking already exists on {b_date_str} during these hours.")
+                    message_container.error(f"⚠️ **Overlap Detected:** A booking already exists on {b_date_str} during these hours.")
                 
                 else:
-                    # Validated - Save Data
+                    # Validated - Save
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -218,7 +208,7 @@ def main():
                     save_data(updated_df)
                     
                     st.session_state['trigger_reset'] = True 
-                    st.session_state['success_msg'] = f"New booking created for {booked_by}!"
+                    st.session_state['success_msg'] = f"Booking Confirmed for {booked_by}!"
                     st.rerun()
 
     st.markdown("---")
@@ -228,131 +218,4 @@ def main():
 
     if not df.empty:
         df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
-        today = datetime.now().date()
-        
-        if search_query:
-            filtered_df = df[
-                df['booked_by'].str.contains(search_query, case=False, na=False) | 
-                df['booking_date'].astype(str).str.contains(search_query, case=False, na=False)
-            ]
-        else:
-            filtered_df = df
-
-        future_df = filtered_df[filtered_df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'], ascending=[True, True])
-        past_df = filtered_df[filtered_df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
-    else:
-        future_df = pd.DataFrame()
-        past_df = pd.DataFrame()
-
-    tab1, tab2, tab3 = st.tabs(["📅 Upcoming Bookings", "📜 Booking History", "✏️ Edit / Update"])
-
-    grid_config = {
-        "id": st.column_config.NumberColumn("ID", width="small"),
-        "booking_date": "Date", 
-        "formatted_start": "Start", 
-        "formatted_end": "End", 
-        "booked_by": "Name", 
-        "total_charges": "Total",
-        "remaining_due": "Due",
-        "advance_mode": "Mode",
-        "remarks": "Remarks"
-    }
-    
-    visible_cols = ["id", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"]
-
-    with tab1:
-        if future_df.empty:
-            st.info("No upcoming bookings.")
-        else:
-            show_f = future_df.copy()
-            show_f['formatted_start'] = show_f['start_time'].apply(convert_to_12h)
-            show_f['formatted_end'] = show_f['end_time'].apply(convert_to_12h)
-            show_f['total_charges'] = show_f['total_charges'].apply(lambda x: f"₹{x:,.0f}")
-            show_f['remaining_due'] = show_f['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(show_f, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
-
-    with tab2:
-        if past_df.empty:
-            st.info("No past history.")
-        else:
-            show_p = past_df.copy()
-            show_p['formatted_start'] = show_p['start_time'].apply(convert_to_12h)
-            show_p['formatted_end'] = show_p['end_time'].apply(convert_to_12h)
-            show_p['total_charges'] = show_p['total_charges'].apply(lambda x: f"₹{x:,.0f}")
-            show_p['remaining_due'] = show_p['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
-            st.dataframe(show_p, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                past_df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False, sheet_name='History')
-            st.download_button("📥 Download History Excel", output.getvalue(), f"turf_history_{datetime.now().strftime('%Y%m%d')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    with tab3:
-        if df.empty:
-            st.write("No records.")
-        else:
-            df['label'] = df['booking_date'].astype(str) + " (" + df['start_time'].astype(str) + ") - " + df['booked_by'].astype(str)
-            id_to_label = dict(zip(df['id'], df['label']))
-
-            if search_query:
-                search_mask = (df['booked_by'].str.contains(search_query, case=False, na=False) | df['booking_date'].astype(str).str.contains(search_query, case=False, na=False))
-                options = df[search_mask]['id'].tolist()
-            else:
-                options = df['id'].tolist()
-                
-            if not options:
-                st.warning("No records match.")
-            else:
-                edit_id = st.selectbox("Select Booking to Edit", options, format_func=lambda x: id_to_label.get(x, f"ID: {x}"))
-                record = df[df['id'] == edit_id].iloc[0]
-                
-                with st.form("edit_form"):
-                    st.subheader(f"Edit: {record['booked_by']}")
-                    c_a, c_b = st.columns(2)
-                    e_date = c_a.date_input("Date", datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
-                    e_name = c_b.text_input("Name", value=record['booked_by'])
-                    
-                    time_slots = get_time_slots()
-                    try:
-                        s_idx = time_slots.index(record['start_time'])
-                        e_idx = time_slots.index(record['end_time'])
-                    except: s_idx, e_idx = 40, 42
-                    
-                    e_start = c_a.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h, key='es')
-                    e_end = c_b.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h, key='ee')
-                    e_rate = c_a.number_input("Ground Fees", value=float(record['rate_per_hour']))
-                    
-                    st.divider()
-                    st.write("**Payment & Remarks**")
-                    pa, pb = st.columns(2)
-                    e_adv = pa.number_input("Advance Paid", value=float(record['advance_paid']))
-                    e_bal_paid = pb.number_input("Balance Paid", value=float(record['balance_paid']))
-                    
-                    curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
-                    mode_idx = PAYMENT_MODES.index(curr_mode) if curr_mode in PAYMENT_MODES else 0
-                    
-                    e_mode = st.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
-                    e_remarks = st.text_input("Remarks", value=str(record['remarks']))
-
-                    upd_submit = st.form_submit_button("💾 Save Changes", type="primary")
-
-                if st.button("🗑️ Delete Booking", key='del_btn'):
-                    df_new = df[df['id'] != edit_id]
-                    save_data(df_new)
-                    st.session_state['success_msg'] = "Record Deleted Successfully."
-                    st.rerun()
-
-                if upd_submit:
-                    e_date_str = e_date.strftime("%Y-%m-%d")
-                    # --- VALIDATION LOGIC FOR EDIT (UPDATED TO USE MODAL) ---
-                    if e_start >= e_end:
-                        show_error_modal("❌ Invalid Time: End time must be after Start time.")
-                    
-                    elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        show_error_modal("⚠️ Overlap Detected: Please choose a different slot.")
-                    
-                    else:
-                        fmt = "%H:%M"
-                        dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
-                        tot = dur * e_rate
-                        rem = tot - e_adv - e_
+        today = datetime.now().
