@@ -93,28 +93,37 @@ def get_next_id(df):
 # 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # --- CSS TO REDUCE TOP WHITESPACE ---
+    # --- CSS: REMOVE TOP WHITESPACE & HEADER BAR ---
     st.markdown("""
         <style>
+               /* Remove top padding from the main container */
                .block-container {
-                    padding-top: 1rem;
-                    padding-bottom: 0rem;
-                    padding-left: 5rem;
-                    padding-right: 5rem;
+                    padding-top: 0rem !important;
+                    padding-bottom: 0rem !important;
+                    padding-left: 2rem;
+                    padding-right: 2rem;
                 }
+               /* Optional: Hide the top hamburger menu bar to gain even more space. 
+                  Comment this out if you need the Settings menu. */
+               header {visibility: hidden;} 
+               
+               /* Reduce gap between elements */
+               div[data-testid="stVerticalBlock"] > div {
+                    gap: 0.5rem;
+               }
         </style>
         """, unsafe_allow_html=True)
 
-    # --- LOGO DISPLAY ---
+    # --- LOGO (Acts as Header) ---
     logo_file = "Sai_Star_logo__2_-removebg-preview.png"
     if os.path.exists(logo_file):
-        c1, c2, c3 = st.columns([1, 2, 1])
+        # Center the logo, occupy less width so it's not huge
+        c1, c2, c3 = st.columns([3, 2, 3])
         with c2:
             st.image(logo_file, use_container_width=True)
-    
-    # Using markdown for title to make it slightly more compact if needed, 
-    # but standard title is fine now that padding is gone.
-    st.markdown("<h1 style='text-align: center; margin-bottom: 20px;'>🏏 Sai Star Booking Manager</h1>", unsafe_allow_html=True)
+    else:
+        # Fallback text if image missing
+        st.markdown("<h2 style='text-align: center;'>🏏 Sai Star Booking Manager</h2>", unsafe_allow_html=True)
     
     # Init State
     init_session_state()
@@ -135,7 +144,7 @@ def main():
         edit_id = st.session_state['edit_id']
         record = df[df['id'] == edit_id].iloc[0]
         
-        st.subheader(f"✏️ Editing Booking: {record['booked_by']}")
+        st.subheader(f"✏️ Edit: {record['booked_by']}")
         
         with st.form("edit_form"):
             c1, c2 = st.columns(2)
@@ -270,9 +279,6 @@ def main():
                         st.session_state['expand_new'] = False
                         st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
                         st.rerun()
-
-        # REMOVED the <hr> here to save space
-        # st.markdown("---")
 
         # 2. UPCOMING BOOKINGS GRID
         st.subheader("📅 Upcoming Bookings")
