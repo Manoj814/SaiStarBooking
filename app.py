@@ -114,7 +114,12 @@ def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
 def get_next_id(df):
     return 1 if df.empty else df['id'].max() + 1
 
+@st.dialog("Success")
+def show_confirmation(message):
+    st.write(message)
+    # The user can click outside or close to dismiss
 # --- Main App ---
+
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
 
@@ -401,4 +406,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
