@@ -117,6 +117,12 @@ def get_next_id(df):
 # --- Main App ---
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
+
+    # --- FIX START: Display Success Message from previous run ---
+    if 'success_msg' in st.session_state:
+        st.success(st.session_state['success_msg'])
+        del st.session_state['success_msg']
+    # --- FIX END ---
     
     # 1. HANDLE RESET
     if st.session_state.get('trigger_reset', False):
@@ -395,3 +401,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
