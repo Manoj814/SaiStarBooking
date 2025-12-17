@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
 import io
-import os # Added to check if logo file exists
+import os 
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIG
@@ -38,7 +38,6 @@ def get_time_slots():
     return slots
 
 def init_session_state():
-    # Use a dynamic form ID to force-clear inputs on successful save
     if 'form_id' not in st.session_state:
         st.session_state['form_id'] = 0 
     
@@ -94,15 +93,28 @@ def get_next_id(df):
 # 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
+    # --- CSS TO REDUCE TOP WHITESPACE ---
+    st.markdown("""
+        <style>
+               .block-container {
+                    padding-top: 1rem;
+                    padding-bottom: 0rem;
+                    padding-left: 5rem;
+                    padding-right: 5rem;
+                }
+        </style>
+        """, unsafe_allow_html=True)
+
     # --- LOGO DISPLAY ---
     logo_file = "Sai_Star_logo__2_-removebg-preview.png"
     if os.path.exists(logo_file):
-        # Center the logo using columns
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             st.image(logo_file, use_container_width=True)
     
-    st.title("🏏 Sai Star Booking Manager")
+    # Using markdown for title to make it slightly more compact if needed, 
+    # but standard title is fine now that padding is gone.
+    st.markdown("<h1 style='text-align: center; margin-bottom: 20px;'>🏏 Sai Star Booking Manager</h1>", unsafe_allow_html=True)
     
     # Init State
     init_session_state()
@@ -259,7 +271,8 @@ def main():
                         st.session_state['success_msg'] = f"✅ Added booking for {b_name}"
                         st.rerun()
 
-        st.markdown("---")
+        # REMOVED the <hr> here to save space
+        # st.markdown("---")
 
         # 2. UPCOMING BOOKINGS GRID
         st.subheader("📅 Upcoming Bookings")
