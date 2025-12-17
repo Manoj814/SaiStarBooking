@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components # Required for scrolling
 import pandas as pd
 from datetime import datetime, timedelta
 from streamlit_gsheets import GSheetsConnection
@@ -27,6 +28,24 @@ PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 def show_modal(message):
     st.success(message)
     st.write("You can close this window now.")
+
+def scroll_to_top():
+    """Injects JS to scroll the window to the top."""
+    js = """
+    <script>
+        var body = window.parent.document.body;
+        var retry = 0;
+        function scrollToTop() {
+            body.scrollTop = 0;
+            if (body.scrollTop !== 0 && retry < 5) {
+                retry++;
+                setTimeout(scrollToTop, 100);
+            }
+        }
+        scrollToTop();
+    </script>
+    """
+    components.html(js, height=0)
 
 def convert_to_12h(time_str):
     try:
@@ -129,8 +148,9 @@ def main():
         show_modal(st.session_state['success_msg'])
         del st.session_state['success_msg']
     
-    # --- B. Error Message Placeholder (Ensures Errors appear at Top) ---
-    top_message = st.empty() # This creates a blank space at the very top
+    # --- B. Error Message Placeholder ---
+    # We create a container at the very top to hold error messages
+    top_message = st.empty() 
 
     # --- C. Reset Logic ---
     if st.session_state.get('trigger_reset', False):
@@ -177,11 +197,15 @@ def main():
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # Validation Checks using top_message
+                # Validation Logic with Focus Scroll
                 if b_start >= b_end:
                     top_message.error("❌ End time must be after Start time.")
+                    scroll_to_top() # <--- FORCE SCROLL TO TOP
+                
                 elif check_overlap(df, b_date_str, b_start, b_end):
                     top_message.error(f"⚠️ Overlap detected on {b_date_str}! Please choose a different slot.")
+                    scroll_to_top() # <--- FORCE SCROLL TO TOP
+                
                 else:
                     # Validated - Proceed to Save
                     fmt = "%H:%M"
@@ -336,11 +360,13 @@ def main():
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
-                    # Validation Checks using top_message
+                    # Validation Checks using top_message + Scroll
                     if e_start >= e_end:
                         top_message.error("❌ End time must be after Start time.")
+                        scroll_to_top() # <--- FORCE SCROLL
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
                         top_message.error("⚠️ Overlap Detected! Please choose a different slot.")
+                        scroll_to_top() # <--- FORCE SCROLL
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
