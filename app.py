@@ -116,24 +116,17 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # --- MESSAGE BAR (Green/Red Notification at top) ---
-    message_box = st.empty()
-
-    # A. Success Logic
-    if 'success_msg' in st.session_state:
-        message_box.success(f"✅ {st.session_state['success_msg']}")
-        del st.session_state['success_msg']
-    
-    # B. Reset Logic
+    # --- RESET LOGIC ---
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
         st.session_state['trigger_reset'] = False 
     
-    # C. Init
+    # --- INIT ---
     init_form_state()
     df = get_data()
 
-    # --- Section 1: Create Booking ---
+    # --- SECTION 1: CREATE BOOKING ---
+    # We use 'expanded=True' so success messages are visible after reload
     with st.expander("➕ Create New Booking", expanded=True):
         with st.form("add_booking_form", clear_on_submit=False):
             col_date, col_name = st.columns([1, 2])
@@ -141,12 +134,9 @@ def main():
             booked_by = col_name.text_input("Booked By (Name)", key='f_name')
             
             time_slots = get_time_slots()
-            
-            # Note: Removed 'index=' to fix Session State warnings
             c1, c2, c3 = st.columns(3)
             b_start = c1.selectbox("Start Time", time_slots, format_func=convert_to_12h, key='f_start')
             b_end = c2.selectbox("End Time", time_slots, format_func=convert_to_12h, key='f_end')
-            
             rate = c3.number_input("Ground Fees (₹)", step=100.0, key='f_fees')
             
             st.markdown("---")
@@ -157,17 +147,22 @@ def main():
             adv_mode = p3.selectbox("Payment Mode", PAYMENT_MODES, key='f_mode')
             remarks = st.text_input("Remarks", placeholder="Optional notes", key='f_remarks')
             
+            # Button
             submitted = st.form_submit_button("✅ Confirm Booking", type="primary")
+            
+            # --- MESSAGE PLACEHOLDER (Right below the Create button) ---
+            create_msg_box = st.empty()
 
             if submitted:
                 b_date_str = b_date.strftime("%Y-%m-%d")
                 
-                # --- VALIDATION ---
+                # Validation
                 if b_start >= b_end:
-                    message_box.error("❌ **Error:** End time must be after Start time.")
+                    create_msg_box.error("❌ End time must be after Start time.")
                 elif check_overlap(df, b_date_str, b_start, b_end):
-                    message_box.error(f"⚠️ **Overlap Detected:** A booking already exists on {b_date_str} in this slot.")
+                    create_msg_box.error(f"⚠️ Overlap detected on {b_date_str}. Please choose a different slot.")
                 else:
+                    # Save Data
                     fmt = "%H:%M"
                     dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
                     total = dur * rate
@@ -194,12 +189,19 @@ def main():
                     save_data(updated_df)
                     
                     st.session_state['trigger_reset'] = True 
-                    st.session_state['success_msg'] = f"Booking Confirmed for {booked_by}!"
+                    # Store success info for display after reload
+                    st.session_state['last_action'] = 'create'
+                    st.session_state['last_msg'] = f"✅ Booking Confirmed for {booked_by}!"
                     st.rerun()
+
+        # Check if we just reloaded from a successful create
+        if st.session_state.get('last_action') == 'create':
+            create_msg_box.success(st.session_state['last_msg'])
+            st.session_state['last_action'] = None # Clear it
 
     st.markdown("---")
 
-    # --- Section 2: Data Grid ---
+    # --- SECTION 2: DATA GRID ---
     search_query = st.text_input("🔍 Search (Name or Date YYYY-MM-DD)", placeholder="Type name...")
 
     if not df.empty:
@@ -253,7 +255,6 @@ def main():
             show_p['remaining_due'] = show_p['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
             st.dataframe(show_p, use_container_width=True, column_config=grid_config, column_order=visible_cols, hide_index=True)
             
-            # --- EXCEL DOWNLOAD (Restored) ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 past_df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False, sheet_name='History')
@@ -296,21 +297,29 @@ def main():
                     e_mode = st.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
                     e_remarks = st.text_input("Remarks", value=str(record['remarks']))
 
-                    upd_submit = st.form_submit_button("💾 Save Changes", type="primary")
+                    # Buttons
+                    col_b1, col_b2 = st.columns([1, 1])
+                    del_btn = col_b1.form_submit_button("🗑️ Delete Booking")
+                    upd_submit = col_b2.form_submit_button("💾 Save Changes", type="primary")
 
-                if st.button("🗑️ Delete Booking", key='del_btn'):
+                    # --- MESSAGE PLACEHOLDER (Inside Edit Form) ---
+                    edit_msg_box = st.empty()
+
+                # LOGIC FOR EDIT/DELETE
+                if del_btn:
                     df_new = df[df['id'] != edit_id]
                     save_data(df_new)
-                    st.session_state['success_msg'] = "Record Deleted Successfully."
+                    st.session_state['last_action'] = 'edit'
+                    st.session_state['last_msg'] = "🗑️ Record Deleted Successfully."
                     st.rerun()
 
                 if upd_submit:
                     e_date_str = e_date.strftime("%Y-%m-%d")
-                    # --- VALIDATION ---
+                    
                     if e_start >= e_end:
-                        message_box.error("❌ **Error:** End time must be after Start time.")
+                        edit_msg_box.error("❌ End time must be after Start time.")
                     elif check_overlap(df, e_date_str, e_start, e_end, exclude_id=edit_id):
-                        message_box.error("⚠️ **Overlap Detected:** Please choose a different slot.")
+                        edit_msg_box.error("⚠️ Overlap Detected: Please choose a different slot.")
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
@@ -330,8 +339,15 @@ def main():
                         df.at[idx, 'remaining_due'] = rem
                         df.at[idx, 'remarks'] = e_remarks
                         save_data(df)
-                        st.session_state['success_msg'] = "Booking Updated Successfully!"
+                        
+                        st.session_state['last_action'] = 'edit'
+                        st.session_state['last_msg'] = "💾 Update Successful!"
                         st.rerun()
+
+                # Check if we just reloaded from a successful edit/delete
+                if st.session_state.get('last_action') == 'edit':
+                    edit_msg_box.success(st.session_state['last_msg'])
+                    st.session_state['last_action'] = None # Clear it
 
 if __name__ == "__main__":
     main()
