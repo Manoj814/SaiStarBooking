@@ -37,9 +37,9 @@ def get_time_slots():
     return slots
 
 def init_session_state():
-    # App State Initialization
+    # Use a dynamic form ID to force-clear inputs on successful save
     if 'form_id' not in st.session_state:
-        st.session_state['form_id'] = 0  # Unique ID to control form resets
+        st.session_state['form_id'] = 0 
     
     if 'expand_new' not in st.session_state:
         st.session_state['expand_new'] = False
@@ -50,10 +50,6 @@ def init_session_state():
         
     if 'success_msg' not in st.session_state:
         st.session_state['success_msg'] = None
-
-    if 'last_action' not in st.session_state:
-        st.session_state['last_action'] = None
-        st.session_state['last_msg'] = None
 
 # --- GOOGLE SHEETS FUNCTIONS ---
 def get_data():
@@ -106,7 +102,7 @@ def main():
     msg_box = st.empty()
     if st.session_state['success_msg']:
         msg_box.success(st.session_state['success_msg'])
-        st.session_state['success_msg'] = None # Clear after showing
+        st.session_state['success_msg'] = None 
 
     # Load Data
     df = get_data()
@@ -201,20 +197,14 @@ def main():
         # 1. ADD NEW BOOKING
         with st.expander("➕ Add New Booking", expanded=st.session_state['expand_new']):
             with st.form("add_form", clear_on_submit=False):
-                # We use a Dynamic ID (form_id) in the keys. 
-                # When we increment this ID, Streamlit creates fresh, empty widgets.
                 fid = st.session_state['form_id'] 
                 
                 c1, c2 = st.columns([1, 2])
-                
-                # --- FIXED LINE HERE: CHANGED 'default' to 'value' ---
-                b_date = c1.date_input("Date", key=f"date_{fid}", value=datetime.now().date())
-                
+                b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
                 b_name = c2.text_input("Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
                 c3, c4, c5 = st.columns(3)
-                # Defaults: 20:00 (index 40) and 21:00 (index 42)
                 b_start = c3.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
                 b_end = c4.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
                 b_rate = c5.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
@@ -271,7 +261,7 @@ def main():
             if future_df.empty:
                 st.info("No upcoming bookings.")
             else:
-                st.caption("👆 **Click on any row to Edit or Delete**")
+                st.caption("👆 **Click on any row to Edit**")
                 
                 display_df = future_df.copy()
                 display_df['S.No'] = range(1, len(display_df) + 1)
