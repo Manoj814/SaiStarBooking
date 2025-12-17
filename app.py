@@ -8,13 +8,17 @@ import io
 st.set_page_config(page_title="Cricket Turf Booking", layout="wide")
 
 # --- Constants ---
+# Added 'remarks' to headers
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
     "booked_by", "advance_paid", "advance_mode", 
     "balance_paid", "balance_mode", 
-    "remaining_due"
+    "remaining_due", "remarks"
 ]
+
+# Updated Payment Modes as per your request
+PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
 # --- Helper Functions ---
 
@@ -37,16 +41,16 @@ def get_time_slots():
 
 def init_form_state():
     """Initialize session state for form fields."""
-    # Note: We use .date() for f_date to ensure strictly DATE type, not DATETIME
     defaults = {
         'f_date': datetime.now().date(),
         'f_name': "",
-        'f_start': "20:00", # Default 8 PM
-        'f_end': "21:00",   # Default 9 PM
+        'f_start': "20:00", 
+        'f_end': "21:00",   
         'f_fees': 1000.0,
         'f_adv': 0.0,
         'f_bal': 0.0,
-        'f_mode': "Cash"
+        'f_mode': "Cash",
+        'f_remarks': ""  # Added remarks default
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -62,6 +66,7 @@ def reset_form_state():
     st.session_state['f_adv'] = 0.0
     st.session_state['f_bal'] = 0.0
     st.session_state['f_mode'] = "Cash"
+    st.session_state['f_remarks'] = "" # Reset remarks
 
 # --- Database Functions ---
 
@@ -78,6 +83,10 @@ def get_data():
         for col in cols_to_float:
             if col not in df.columns: df[col] = 0.0
             else: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        
+        # Ensure remarks column exists
+        if 'remarks' not in df.columns:
+            df['remarks'] = ""
             
         return df
     except Exception:
@@ -89,7 +98,6 @@ def save_data(df):
 
 def check_overlap(df, date_str, start_str, end_str, exclude_id=None):
     if df.empty: return False
-    # Convert both to string to ensure safe comparison
     day_bookings = df[df['booking_date'].astype(str) == str(date_str)]
     
     if exclude_id is not None:
@@ -110,10 +118,10 @@ def get_next_id(df):
 def main():
     st.title("🏏 Cricket Academy Booking Manager")
     
-    # 1. HANDLE RESET (Must happen before widgets are drawn)
+    # 1. HANDLE RESET
     if st.session_state.get('trigger_reset', False):
         reset_form_state()
-        st.session_state['trigger_reset'] = False # Turn off flag
+        st.session_state['trigger_reset'] = False 
     
     # 2. Initialize defaults
     init_form_state()
@@ -142,10 +150,16 @@ def main():
             
             st.markdown("---")
             st.caption("Payment Details")
+            
+            # Updated Payment Section
             p1, p2, p3 = st.columns(3)
             adv_paid = p1.number_input("Advance Paid (₹)", step=100.0, key='f_adv')
             bal_paid = p2.number_input("Balance Paid Now (₹)", step=100.0, key='f_bal')
-            adv_mode = p3.radio("Payment Mode", ["Cash", "GPay", "Pending"], horizontal=True, key='f_mode')
+            # Updated options to include Cash+Gpay
+            adv_mode = p3.selectbox("Payment Mode", PAYMENT_MODES, key='f_mode')
+            
+            # Added Remarks Field
+            remarks = st.text_input("Remarks", placeholder="Optional notes (e.g. Regular Customer)", key='f_remarks')
             
             submitted = st.form_submit_button("✅ Confirm Booking", type="primary")
 
@@ -174,14 +188,14 @@ def main():
                         "advance_paid": adv_paid,
                         "advance_mode": adv_mode,
                         "balance_paid": bal_paid,
-                        "balance_mode": adv_mode,
-                        "remaining_due": remaining
+                        "balance_mode": adv_mode, # Assuming same mode if paid now
+                        "remaining_due": remaining,
+                        "remarks": remarks
                     }])
                     
                     updated_df = pd.concat([df, new_record], ignore_index=True)
                     save_data(updated_df)
                     
-                    # SUCCESS: Trigger reset for NEXT RUN and reload immediately
                     st.session_state['trigger_reset'] = True 
                     st.success(f"Booking Confirmed for {booked_by}!")
                     st.rerun()
@@ -192,11 +206,9 @@ def main():
     search_query = st.text_input("🔍 Search (Name or Date YYYY-MM-DD)", placeholder="Type name...")
 
     if not df.empty:
-        # 1. Prepare Data
         df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
         today = datetime.now().date()
         
-        # 2. Filter Search globally first
         if search_query:
             filtered_df = df[
                 df['booked_by'].str.contains(search_query, case=False, na=False) | 
@@ -205,7 +217,6 @@ def main():
         else:
             filtered_df = df
 
-        # 3. Split into Future/Past
         future_df = filtered_df[filtered_df['dt_obj'] >= today].sort_values(by=['booking_date', 'start_time'], ascending=[True, True])
         past_df = filtered_df[filtered_df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=[False, True])
     else:
@@ -215,30 +226,37 @@ def main():
     # --- Tabs Layout ---
     tab1, tab2, tab3 = st.tabs(["📅 Upcoming Bookings", "📜 Booking History", "✏️ Edit / Update"])
 
+    # Define Column Config for nice display
+    grid_config = {
+        "id": st.column_config.NumberColumn("ID", width="small"),
+        "booking_date": "Date", 
+        "formatted_start": "Start", 
+        "formatted_end": "End", 
+        "booked_by": "Name", 
+        "total_charges": "Total",
+        "remaining_due": "Due",
+        "advance_mode": "Mode",
+        "remarks": "Remarks"
+    }
+    
+    visible_cols = ["id", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"]
+
     # --- TAB 1: FUTURE ---
     with tab1:
         if future_df.empty:
             st.info("No upcoming bookings found.")
         else:
-            st.caption(f"Showing {len(future_df)} upcoming bookings.")
-            
-            # Format
             show_f = future_df.copy()
             show_f['formatted_start'] = show_f['start_time'].apply(convert_to_12h)
             show_f['formatted_end'] = show_f['end_time'].apply(convert_to_12h)
-            show_f['booking_date'] = pd.to_datetime(show_f['booking_date']).dt.strftime('%Y-%m-%d')
             show_f['total_charges'] = show_f['total_charges'].apply(lambda x: f"₹{x:,.0f}")
             show_f['remaining_due'] = show_f['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
 
             st.dataframe(
                 show_f,
                 use_container_width=True,
-                column_config={
-                    "id": "ID", "booking_date": "Date", 
-                    "formatted_start": "Start", "formatted_end": "End", 
-                    "booked_by": "Name", "total_hours": "Hrs", "remaining_due": "Due"
-                },
-                column_order=["id", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_hours", "remaining_due"],
+                column_config=grid_config,
+                column_order=visible_cols,
                 hide_index=True
             )
 
@@ -247,29 +265,20 @@ def main():
         if past_df.empty:
             st.info("No past booking history.")
         else:
-            st.caption(f"Showing {len(past_df)} past bookings.")
-            
-            # Format
             show_p = past_df.copy()
             show_p['formatted_start'] = show_p['start_time'].apply(convert_to_12h)
             show_p['formatted_end'] = show_p['end_time'].apply(convert_to_12h)
-            show_p['booking_date'] = pd.to_datetime(show_p['booking_date']).dt.strftime('%Y-%m-%d')
             show_p['total_charges'] = show_p['total_charges'].apply(lambda x: f"₹{x:,.0f}")
             show_p['remaining_due'] = show_p['remaining_due'].apply(lambda x: f"₹{x:,.0f}")
 
             st.dataframe(
                 show_p,
                 use_container_width=True,
-                column_config={
-                    "id": "ID", "booking_date": "Date", 
-                    "formatted_start": "Start", "formatted_end": "End", 
-                    "booked_by": "Name", "total_hours": "Hrs", "remaining_due": "Due"
-                },
-                column_order=["id", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_hours", "remaining_due"],
+                column_config=grid_config,
+                column_order=visible_cols,
                 hide_index=True
             )
             
-            # Excel Download for History
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 past_df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False, sheet_name='History')
@@ -286,7 +295,6 @@ def main():
         if df.empty:
             st.write("No records available.")
         else:
-            # Create Dictionary for Lookup
             df['label'] = (
                 df['booking_date'].astype(str) + " (" + 
                 df['start_time'].astype(str) + ") - " + 
@@ -294,9 +302,7 @@ def main():
             )
             id_to_label = dict(zip(df['id'], df['label']))
 
-            # If searching, restrict options. If not, show all.
             if search_query:
-                # Filter 'df' based on search query same as above
                 search_mask = (
                     df['booked_by'].str.contains(search_query, case=False, na=False) | 
                     df['booking_date'].astype(str).str.contains(search_query, case=False, na=False)
@@ -334,11 +340,20 @@ def main():
                     e_rate = c_a.number_input("Ground Fees", value=float(record['rate_per_hour']))
                     
                     st.divider()
-                    st.write("**Payment Status Update**")
+                    st.write("**Payment & Remarks**")
                     pa, pb = st.columns(2)
                     e_adv = pa.number_input("Advance Paid", value=float(record['advance_paid']))
                     e_bal_paid = pb.number_input("Balance Amount Paid", value=float(record['balance_paid']))
-                    e_mode = st.radio("Payment Mode", ["Cash", "GPay", "Pending"], horizontal=True, index=0)
+                    
+                    # Ensure the current mode is valid in our new list
+                    curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
+                    try:
+                        mode_idx = PAYMENT_MODES.index(curr_mode)
+                    except ValueError:
+                        mode_idx = 0
+
+                    e_mode = st.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
+                    e_remarks = st.text_input("Remarks", value=str(record['remarks']))
 
                     upd_submit = st.form_submit_button("💾 Save Changes", type="primary")
 
@@ -372,6 +387,7 @@ def main():
                         df.at[idx, 'balance_paid'] = e_bal_paid
                         df.at[idx, 'advance_mode'] = e_mode
                         df.at[idx, 'remaining_due'] = rem
+                        df.at[idx, 'remarks'] = e_remarks # Update remarks
                         
                         save_data(df)
                         st.success("Updated Successfully!")
