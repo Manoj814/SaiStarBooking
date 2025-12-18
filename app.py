@@ -93,7 +93,7 @@ def get_next_id(df):
 # 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    # --- CSS: REMOVE TOP WHITESPACE & HEADER BAR ---
+    # --- CSS ---
     st.markdown("""
         <style>
                .block-container {
@@ -109,7 +109,7 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-    # --- LOGO (Acts as Header) ---
+    # --- LOGO ---
     logo_file = "Sai_Star_logo__2_-removebg-preview.png"
     if os.path.exists(logo_file):
         c1, c2, c3 = st.columns([3, 2, 3])
@@ -118,10 +118,7 @@ def main():
     else:
         st.markdown("<h2 style='text-align: center;'>🏏 Sai Star Booking Manager</h2>", unsafe_allow_html=True)
     
-    # Init State
     init_session_state()
-    
-    # Load Data
     df = get_data()
 
     # --- PRE-PROCESS DATE ---
@@ -141,7 +138,7 @@ def main():
         with st.form("edit_form"):
             c1, c2 = st.columns(2)
             e_date = c1.date_input("Date", value=datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
-            e_name = c2.text_input("Name", value=record['booked_by'])
+            e_name = c2.text_input("Booking Name", value=record['booked_by'])
             
             time_slots = get_time_slots()
             try: s_idx, e_idx = time_slots.index(record['start_time']), time_slots.index(record['end_time'])
@@ -167,7 +164,7 @@ def main():
             del_btn = b2.form_submit_button("🗑️ Delete")
             save_btn = b3.form_submit_button("💾 Save Changes", type="primary")
 
-            # --- ERROR MESSAGE PLACEHOLDER (Below Buttons) ---
+            # ERROR MSG
             edit_msg_placeholder = st.empty()
 
             if cancel_btn:
@@ -226,7 +223,7 @@ def main():
                 
                 c1, c2 = st.columns([1, 2])
                 b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
-                b_name = c2.text_input("Name", key=f"name_{fid}")
+                b_name = c2.text_input("Booking Name", key=f"name_{fid}")
                 
                 time_slots = get_time_slots()
                 c3, c4, c5 = st.columns(3)
@@ -242,7 +239,7 @@ def main():
                 
                 add_sub = st.form_submit_button("✅ Confirm Booking", type="primary")
 
-                # --- ERROR MESSAGE PLACEHOLDER (Inside Form, Below Button) ---
+                # ERROR MSG
                 add_msg_placeholder = st.empty()
                 
                 if add_sub:
@@ -268,16 +265,16 @@ def main():
                         save_data(pd.concat([df, new_row], ignore_index=True))
                         
                         st.session_state['form_id'] += 1
-                        st.session_state['expand_new'] = False  # Collapse form on success
+                        st.session_state['expand_new'] = False
                         st.session_state['success_msg'] = f"✅ Booking Added for {b_name}!"
                         st.rerun()
 
-        # 2. SUCCESS MESSAGE (Appears here after reload)
+        # 2. SUCCESS MSG
         if st.session_state['success_msg']:
             st.success(st.session_state['success_msg'])
             st.session_state['success_msg'] = None
 
-        # 3. UPCOMING BOOKINGS GRID
+        # 3. GRID
         st.subheader("📅 Upcoming Bookings")
         
         if df.empty:
@@ -296,12 +293,13 @@ def main():
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
+                # --- UPDATED COLUMN CONFIG ---
                 grid_cols = {
                     "S.No": st.column_config.NumberColumn("S.No", width="small"),
                     "booking_date": "Date",
                     "formatted_start": "Start",
                     "formatted_end": "End",
-                    "booked_by": "Name",
+                    "booked_by": "Booking Name",  # <--- RENAMED HEADER
                     "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
                     "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
                     "advance_mode": "Mode",
@@ -325,7 +323,7 @@ def main():
                     st.session_state['edit_id'] = selected_db_id
                     st.rerun()
 
-        # 4. PAST HISTORY
+        # 4. HISTORY
         with st.expander("📜 View Booking History"):
             if df.empty:
                 st.info("No past history.")
