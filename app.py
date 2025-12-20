@@ -16,7 +16,7 @@ st.set_page_config(page_title="Sai Star Booking Manager", layout="wide")
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
-    "booked_by", "advance_paid", "advance_mode", 
+    "booked_by", "mobile_number", "advance_paid", "advance_mode",  # Added mobile_number
     "balance_paid", "balance_mode", 
     "remaining_due", "remarks"
 ]
@@ -64,7 +64,9 @@ def get_data():
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-        text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
+        
+        # Added mobile_number to text columns to preserve formatting
+        text_cols = ['booked_by', 'mobile_number', 'advance_mode', 'balance_mode', 'remarks']
         for col in text_cols: df[col] = df[col].fillna("").astype(str)
         return df
     except Exception:
@@ -136,27 +138,28 @@ def main():
         st.subheader(f"✏️ Edit: {record['booked_by']}")
         
         with st.form("edit_form"):
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             e_date = c1.date_input("Date", value=datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
             e_name = c2.text_input("Booking Name", value=record['booked_by'])
+            e_mobile = c3.text_input("Mobile No", value=str(record['mobile_number'])) # Added Mobile
             
             time_slots = get_time_slots()
             try: s_idx, e_idx = time_slots.index(record['start_time']), time_slots.index(record['end_time'])
             except: s_idx, e_idx = 40, 42
             
-            c3, c4 = st.columns(2)
-            e_start = c3.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h)
-            e_end = c4.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h)
+            c4, c5 = st.columns(2)
+            e_start = c4.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h)
+            e_end = c5.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h)
             e_rate = st.number_input("Ground Fees", value=float(record['rate_per_hour']))
             
             st.divider()
-            c5, c6, c7 = st.columns(3)
-            e_adv = c5.number_input("Advance Paid", value=float(record['advance_paid']))
-            e_bal_paid = c6.number_input("Balance Paid", value=float(record['balance_paid']))
+            c6, c7, c8 = st.columns(3)
+            e_adv = c6.number_input("Advance Paid", value=float(record['advance_paid']))
+            e_bal_paid = c7.number_input("Balance Paid", value=float(record['balance_paid']))
             
             curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
             mode_idx = PAYMENT_MODES.index(curr_mode) if curr_mode in PAYMENT_MODES else 0
-            e_mode = c7.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
+            e_mode = c8.selectbox("Payment Mode", PAYMENT_MODES, index=mode_idx)
             e_remarks = st.text_input("Remarks", value=str(record['remarks']))
 
             b1, b2, b3 = st.columns([1, 1, 4])
@@ -164,7 +167,6 @@ def main():
             del_btn = b2.form_submit_button("🗑️ Delete")
             save_btn = b3.form_submit_button("💾 Save Changes", type="primary")
 
-            # ERROR MSG
             edit_msg_placeholder = st.empty()
 
             if cancel_btn:
@@ -195,6 +197,7 @@ def main():
                     idx = df.index[df['id'] == edit_id][0]
                     df.at[idx, 'booking_date'] = e_date_str
                     df.at[idx, 'booked_by'] = e_name
+                    df.at[idx, 'mobile_number'] = e_mobile # Save Mobile
                     df.at[idx, 'start_time'] = e_start
                     df.at[idx, 'end_time'] = e_end
                     df.at[idx, 'total_hours'] = dur
@@ -221,25 +224,24 @@ def main():
             with st.form("add_form", clear_on_submit=False):
                 fid = st.session_state['form_id'] 
                 
-                c1, c2 = st.columns([1, 2])
+                c1, c2, c3 = st.columns([1, 2, 2])
                 b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
                 b_name = c2.text_input("Booking Name", key=f"name_{fid}")
+                b_mobile = c3.text_input("Mobile No", key=f"mobile_{fid}") # Added Mobile Input
                 
                 time_slots = get_time_slots()
-                c3, c4, c5 = st.columns(3)
-                b_start = c3.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
-                b_end = c4.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
-                b_rate = c5.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
+                c4, c5, c6 = st.columns(3)
+                b_start = c4.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
+                b_end = c5.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
+                b_rate = c6.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
                 
-                c6, c7, c8 = st.columns(3)
-                b_adv = c6.number_input("Advance", step=100.0, key=f"adv_{fid}")
-                b_bal = c7.number_input("Balance Paid", step=100.0, key=f"bal_{fid}")
-                b_mode = c8.selectbox("Mode", PAYMENT_MODES, key=f"mode_{fid}")
+                c7, c8, c9 = st.columns(3)
+                b_adv = c7.number_input("Advance", step=100.0, key=f"adv_{fid}")
+                b_bal = c8.number_input("Balance Paid", step=100.0, key=f"bal_{fid}")
+                b_mode = c9.selectbox("Mode", PAYMENT_MODES, key=f"mode_{fid}")
                 b_rem = st.text_input("Remarks", key=f"rem_{fid}")
                 
                 add_sub = st.form_submit_button("✅ Confirm Booking", type="primary")
-
-                # ERROR MSG
                 add_msg_placeholder = st.empty()
                 
                 if add_sub:
@@ -258,7 +260,8 @@ def main():
                             "id": get_next_id(df), "booking_date": b_date_str,
                             "start_time": b_start, "end_time": b_end,
                             "total_hours": dur, "rate_per_hour": b_rate, "total_charges": tot,
-                            "booked_by": b_name, "advance_paid": b_adv, "advance_mode": b_mode,
+                            "booked_by": b_name, "mobile_number": b_mobile, # Save Mobile
+                            "advance_paid": b_adv, "advance_mode": b_mode,
                             "balance_paid": b_bal, "balance_mode": b_mode,
                             "remaining_due": rem, "remarks": b_rem
                         }])
@@ -293,14 +296,14 @@ def main():
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
-                # --- UPDATED COLUMN CONFIG ---
                 grid_cols = {
                     "S.No": st.column_config.NumberColumn("S.No", width="small"),
                     "booking_date": "Date",
                     "formatted_start": "Start",
                     "formatted_end": "End",
-                    "booked_by": "Booking Name",  # <--- RENAMED HEADER
+                    "booked_by": "Booking Name",
                     "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
+                    "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"), # Added Advance Column
                     "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
                     "advance_mode": "Mode",
                     "remarks": "Remarks"
@@ -309,7 +312,8 @@ def main():
                 event = st.dataframe(
                     display_df,
                     column_config=grid_cols,
-                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "remaining_due", "advance_mode", "remarks"],
+                    # Added 'advance_paid' to the column order
+                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
@@ -333,7 +337,7 @@ def main():
                     past_df['S.No'] = range(1, len(past_df) + 1)
                     st.dataframe(
                         past_df,
-                        column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "total_charges"],
+                        column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "mobile_number", "total_charges"],
                         hide_index=True,
                         use_container_width=True
                     )
