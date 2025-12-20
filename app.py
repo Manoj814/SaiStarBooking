@@ -57,15 +57,35 @@ def get_data():
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
         if df.empty: return pd.DataFrame(columns=EXPECTED_HEADERS)
+        
+        # Normalize headers
         df.columns = [str(c).lower().strip() for c in df.columns]
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
+        
+        # --- TYPE CONVERSION FIXES ---
+        
+        # 1. ID
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
-        cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
-        for col in cols_to_float:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-        text_cols = ['booked_by', 'mobile_number', 'advance_mode', 'balance_mode', 'remarks']
-        for col in text_cols: df[col] = df[col].fillna("").astype(str)
+        
+        # 2. Money Columns (Force Integer)
+        money_cols = ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
+        for col in money_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+            
+        # 3. Hours (Keep as float, e.g. 1.5 hours)
+        df['total_hours'] = pd.to_numeric(df['total_hours'], errors='coerce').fillna(0.0)
+        
+        # 4. Text Columns
+        text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
+        for col in text_cols: 
+            df[col] = df[col].fillna("").astype(str)
+            
+        # 5. Mobile Number Fix (Remove .0 decimals)
+        # Convert to string first, then remove trailing .0
+        df['mobile_number'] = df['mobile_number'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df['mobile_number'] = df['mobile_number'].replace('nan', '') # Clean literal 'nan' strings
+
         return df
     except Exception:
         return pd.DataFrame(columns=EXPECTED_HEADERS)
@@ -148,12 +168,14 @@ def main():
             c4, c5 = st.columns(2)
             e_start = c4.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h)
             e_end = c5.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h)
-            e_rate = st.number_input("Ground Fees", value=float(record['rate_per_hour']))
+            
+            # Use 'int' type for number input by using step=100
+            e_rate = st.number_input("Ground Fees", value=int(record['rate_per_hour']), step=100)
             
             st.divider()
             c6, c7, c8 = st.columns(3)
-            e_adv = c6.number_input("Advance Paid", value=float(record['advance_paid']))
-            e_bal_paid = c7.number_input("Balance Paid", value=float(record['balance_paid']))
+            e_adv = c6.number_input("Advance Paid", value=int(record['advance_paid']), step=100)
+            e_bal_paid = c7.number_input("Balance Paid", value=int(record['balance_paid']), step=100)
             
             curr_mode = record['advance_mode'] if record['advance_mode'] in PAYMENT_MODES else "Cash"
             mode_idx = PAYMENT_MODES.index(curr_mode) if curr_mode in PAYMENT_MODES else 0
@@ -189,8 +211,9 @@ def main():
                 else:
                     fmt = "%H:%M"
                     dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
-                    tot = dur * e_rate
-                    rem = tot - e_adv - e_bal_paid
+                    # Calculate totals as INTEGERS
+                    tot = int(dur * e_rate)
+                    rem = int(tot - e_adv - e_bal_paid)
                     
                     idx = df.index[df['id'] == edit_id][0]
                     df.at[idx, 'booking_date'] = e_date_str
@@ -199,10 +222,10 @@ def main():
                     df.at[idx, 'start_time'] = e_start
                     df.at[idx, 'end_time'] = e_end
                     df.at[idx, 'total_hours'] = dur
-                    df.at[idx, 'rate_per_hour'] = e_rate
+                    df.at[idx, 'rate_per_hour'] = int(e_rate)
                     df.at[idx, 'total_charges'] = tot
-                    df.at[idx, 'advance_paid'] = e_adv
-                    df.at[idx, 'balance_paid'] = e_bal_paid
+                    df.at[idx, 'advance_paid'] = int(e_adv)
+                    df.at[idx, 'balance_paid'] = int(e_bal_paid)
                     df.at[idx, 'advance_mode'] = e_mode
                     df.at[idx, 'remaining_due'] = rem
                     df.at[idx, 'remarks'] = e_remarks
@@ -231,11 +254,13 @@ def main():
                 c4, c5, c6 = st.columns(3)
                 b_start = c4.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
                 b_end = c5.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
-                b_rate = c6.number_input("Fees", step=100.0, value=1000.0, key=f"fees_{fid}")
+                
+                # Use Integers for inputs (value=1000, step=100)
+                b_rate = c6.number_input("Fees", step=100, value=1000, key=f"fees_{fid}")
                 
                 c7, c8, c9 = st.columns(3)
-                b_adv = c7.number_input("Advance", step=100.0, key=f"adv_{fid}")
-                b_bal = c8.number_input("Balance Paid", step=100.0, key=f"bal_{fid}")
+                b_adv = c7.number_input("Advance", step=100, value=0, key=f"adv_{fid}")
+                b_bal = c8.number_input("Balance Paid", step=100, value=0, key=f"bal_{fid}")
                 b_mode = c9.selectbox("Mode", PAYMENT_MODES, key=f"mode_{fid}")
                 b_rem = st.text_input("Remarks", key=f"rem_{fid}")
                 
@@ -251,16 +276,20 @@ def main():
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
-                        tot = dur * b_rate
-                        rem = tot - b_adv - b_bal
+                        
+                        # INT CALCULATIONS
+                        tot = int(dur * b_rate)
+                        rem = int(tot - b_adv - b_bal)
                         
                         new_row = pd.DataFrame([{
                             "id": get_next_id(df), "booking_date": b_date_str,
                             "start_time": b_start, "end_time": b_end,
-                            "total_hours": dur, "rate_per_hour": b_rate, "total_charges": tot,
+                            "total_hours": dur, 
+                            "rate_per_hour": int(b_rate), 
+                            "total_charges": tot,
                             "booked_by": b_name, "mobile_number": b_mobile,
-                            "advance_paid": b_adv, "advance_mode": b_mode,
-                            "balance_paid": b_bal, "balance_mode": b_mode,
+                            "advance_paid": int(b_adv), "advance_mode": b_mode,
+                            "balance_paid": int(b_bal), "balance_mode": b_mode,
                             "remaining_due": rem, "remarks": b_rem
                         }])
                         save_data(pd.concat([df, new_row], ignore_index=True))
@@ -294,14 +323,15 @@ def main():
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
-                # --- UPDATED COLUMN CONFIG ---
+                # --- UPDATED COLUMN CONFIG (No Decimals) ---
                 grid_cols = {
-                    "S.No": st.column_config.NumberColumn("S.No", width="small"), # Small width
+                    "S.No": st.column_config.NumberColumn("S.No", width="small"),
                     "booking_date": "Date",
                     "formatted_start": "Start",
                     "formatted_end": "End",
-                    "booked_by": "Name",
-                    "mobile_number": "Mobile", # Added Mobile Header
+                    "booked_by": "Booking Name",
+                    "mobile_number": "Mobile",
+                    # %d format ensures integer display (no decimals)
                     "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
                     "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"),
                     "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
@@ -312,7 +342,6 @@ def main():
                 event = st.dataframe(
                     display_df,
                     column_config=grid_cols,
-                    # Added 'mobile_number' to the order
                     column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"],
                     use_container_width=True,
                     hide_index=True,
