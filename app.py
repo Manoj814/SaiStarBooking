@@ -16,7 +16,7 @@ st.set_page_config(page_title="Sai Star Booking Manager", layout="wide")
 EXPECTED_HEADERS = [
     "id", "booking_date", "start_time", "end_time", 
     "total_hours", "rate_per_hour", "total_charges", 
-    "booked_by", "mobile_number", "advance_paid", "advance_mode",  # Added mobile_number
+    "booked_by", "mobile_number", "advance_paid", "advance_mode", 
     "balance_paid", "balance_mode", 
     "remaining_due", "remarks"
 ]
@@ -64,8 +64,6 @@ def get_data():
         cols_to_float = ['total_hours', 'rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in cols_to_float:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-        
-        # Added mobile_number to text columns to preserve formatting
         text_cols = ['booked_by', 'mobile_number', 'advance_mode', 'balance_mode', 'remarks']
         for col in text_cols: df[col] = df[col].fillna("").astype(str)
         return df
@@ -129,7 +127,7 @@ def main():
     # ------------------------
 
     # ---------------------------------------------------------
-    # PART A: EDIT SCREEN (Only visible if a row is selected)
+    # PART A: EDIT SCREEN
     # ---------------------------------------------------------
     if st.session_state['edit_mode'] and st.session_state['edit_id'] is not None:
         edit_id = st.session_state['edit_id']
@@ -141,7 +139,7 @@ def main():
             c1, c2, c3 = st.columns(3)
             e_date = c1.date_input("Date", value=datetime.strptime(str(record['booking_date']), '%Y-%m-%d'))
             e_name = c2.text_input("Booking Name", value=record['booked_by'])
-            e_mobile = c3.text_input("Mobile No", value=str(record['mobile_number'])) # Added Mobile
+            e_mobile = c3.text_input("Mobile No", value=str(record['mobile_number']))
             
             time_slots = get_time_slots()
             try: s_idx, e_idx = time_slots.index(record['start_time']), time_slots.index(record['end_time'])
@@ -197,7 +195,7 @@ def main():
                     idx = df.index[df['id'] == edit_id][0]
                     df.at[idx, 'booking_date'] = e_date_str
                     df.at[idx, 'booked_by'] = e_name
-                    df.at[idx, 'mobile_number'] = e_mobile # Save Mobile
+                    df.at[idx, 'mobile_number'] = e_mobile
                     df.at[idx, 'start_time'] = e_start
                     df.at[idx, 'end_time'] = e_end
                     df.at[idx, 'total_hours'] = dur
@@ -216,7 +214,7 @@ def main():
                     st.rerun()
 
     # ---------------------------------------------------------
-    # PART B: MAIN GRID SCREEN (Visible if NOT editing)
+    # PART B: MAIN GRID SCREEN
     # ---------------------------------------------------------
     else:
         # 1. ADD NEW BOOKING
@@ -227,7 +225,7 @@ def main():
                 c1, c2, c3 = st.columns([1, 2, 2])
                 b_date = c1.date_input("Date", value=datetime.now().date(), key=f"date_{fid}")
                 b_name = c2.text_input("Booking Name", key=f"name_{fid}")
-                b_mobile = c3.text_input("Mobile No", key=f"mobile_{fid}") # Added Mobile Input
+                b_mobile = c3.text_input("Mobile No", key=f"mobile_{fid}")
                 
                 time_slots = get_time_slots()
                 c4, c5, c6 = st.columns(3)
@@ -260,7 +258,7 @@ def main():
                             "id": get_next_id(df), "booking_date": b_date_str,
                             "start_time": b_start, "end_time": b_end,
                             "total_hours": dur, "rate_per_hour": b_rate, "total_charges": tot,
-                            "booked_by": b_name, "mobile_number": b_mobile, # Save Mobile
+                            "booked_by": b_name, "mobile_number": b_mobile,
                             "advance_paid": b_adv, "advance_mode": b_mode,
                             "balance_paid": b_bal, "balance_mode": b_mode,
                             "remaining_due": rem, "remarks": b_rem
@@ -296,14 +294,16 @@ def main():
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
+                # --- UPDATED COLUMN CONFIG ---
                 grid_cols = {
-                    "S.No": st.column_config.NumberColumn("S.No", width="small"),
+                    "S.No": st.column_config.NumberColumn("S.No", width="small"), # Small width
                     "booking_date": "Date",
                     "formatted_start": "Start",
                     "formatted_end": "End",
-                    "booked_by": "Booking Name",
+                    "booked_by": "Name",
+                    "mobile_number": "Mobile", # Added Mobile Header
                     "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
-                    "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"), # Added Advance Column
+                    "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"),
                     "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
                     "advance_mode": "Mode",
                     "remarks": "Remarks"
@@ -312,8 +312,8 @@ def main():
                 event = st.dataframe(
                     display_df,
                     column_config=grid_cols,
-                    # Added 'advance_paid' to the column order
-                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"],
+                    # Added 'mobile_number' to the order
+                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"],
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
