@@ -58,33 +58,25 @@ def get_data():
         df = conn.read(worksheet="Sheet1", ttl=0)
         if df.empty: return pd.DataFrame(columns=EXPECTED_HEADERS)
         
-        # Normalize headers
         df.columns = [str(c).lower().strip() for c in df.columns]
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
         
-        # --- TYPE CONVERSION FIXES ---
-        
-        # 1. ID
+        # --- TYPE CONVERSION ---
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
         
-        # 2. Money Columns (Force Integer)
         money_cols = ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in money_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
             
-        # 3. Hours (Keep as float, e.g. 1.5 hours)
         df['total_hours'] = pd.to_numeric(df['total_hours'], errors='coerce').fillna(0.0)
         
-        # 4. Text Columns
         text_cols = ['booked_by', 'advance_mode', 'balance_mode', 'remarks']
-        for col in text_cols: 
-            df[col] = df[col].fillna("").astype(str)
+        for col in text_cols: df[col] = df[col].fillna("").astype(str)
             
-        # 5. Mobile Number Fix (Remove .0 decimals)
-        # Convert to string first, then remove trailing .0
+        # Mobile Number Fix
         df['mobile_number'] = df['mobile_number'].astype(str).str.replace(r'\.0$', '', regex=True)
-        df['mobile_number'] = df['mobile_number'].replace('nan', '') # Clean literal 'nan' strings
+        df['mobile_number'] = df['mobile_number'].replace('nan', '')
 
         return df
     except Exception:
@@ -169,7 +161,6 @@ def main():
             e_start = c4.selectbox("Start", time_slots, index=s_idx, format_func=convert_to_12h)
             e_end = c5.selectbox("End", time_slots, index=e_idx, format_func=convert_to_12h)
             
-            # Use 'int' type for number input by using step=100
             e_rate = st.number_input("Ground Fees", value=int(record['rate_per_hour']), step=100)
             
             st.divider()
@@ -211,7 +202,6 @@ def main():
                 else:
                     fmt = "%H:%M"
                     dur = (datetime.strptime(e_end, fmt) - datetime.strptime(e_start, fmt)).total_seconds() / 3600
-                    # Calculate totals as INTEGERS
                     tot = int(dur * e_rate)
                     rem = int(tot - e_adv - e_bal_paid)
                     
@@ -254,8 +244,6 @@ def main():
                 c4, c5, c6 = st.columns(3)
                 b_start = c4.selectbox("Start", time_slots, index=40, format_func=convert_to_12h, key=f"start_{fid}")
                 b_end = c5.selectbox("End", time_slots, index=42, format_func=convert_to_12h, key=f"end_{fid}")
-                
-                # Use Integers for inputs (value=1000, step=100)
                 b_rate = c6.number_input("Fees", step=100, value=1000, key=f"fees_{fid}")
                 
                 c7, c8, c9 = st.columns(3)
@@ -276,8 +264,6 @@ def main():
                     else:
                         fmt = "%H:%M"
                         dur = (datetime.strptime(b_end, fmt) - datetime.strptime(b_start, fmt)).total_seconds() / 3600
-                        
-                        # INT CALCULATIONS
                         tot = int(dur * b_rate)
                         rem = int(tot - b_adv - b_bal)
                         
@@ -304,7 +290,23 @@ def main():
             st.success(st.session_state['success_msg'])
             st.session_state['success_msg'] = None
 
-        # 3. GRID
+        # --- GRID CONFIGURATION (Used for both Upcoming and History) ---
+        grid_cols = {
+            "S.No": st.column_config.NumberColumn("S.No", width="small"),
+            "booking_date": "Date",
+            "formatted_start": "Start",
+            "formatted_end": "End",
+            "booked_by": "Booking Name",
+            "mobile_number": "Mobile",
+            "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
+            "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"),
+            "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
+            "advance_mode": "Mode",
+            "remarks": "Remarks"
+        }
+        visible_cols = ["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"]
+
+        # 3. UPCOMING GRID
         st.subheader("📅 Upcoming Bookings")
         
         if df.empty:
@@ -317,59 +319,61 @@ def main():
                 st.info("No upcoming bookings.")
             else:
                 st.caption("👆 **Click on any row to Edit**")
-                
                 display_df = future_df.copy()
                 display_df['S.No'] = range(1, len(display_df) + 1)
                 display_df['formatted_start'] = display_df['start_time'].apply(convert_to_12h)
                 display_df['formatted_end'] = display_df['end_time'].apply(convert_to_12h)
                 
-                # --- UPDATED COLUMN CONFIG (No Decimals) ---
-                grid_cols = {
-                    "S.No": st.column_config.NumberColumn("S.No", width="small"),
-                    "booking_date": "Date",
-                    "formatted_start": "Start",
-                    "formatted_end": "End",
-                    "booked_by": "Booking Name",
-                    "mobile_number": "Mobile",
-                    # %d format ensures integer display (no decimals)
-                    "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
-                    "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"),
-                    "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
-                    "advance_mode": "Mode",
-                    "remarks": "Remarks"
-                }
-                
-                event = st.dataframe(
+                event_upcoming = st.dataframe(
                     display_df,
                     column_config=grid_cols,
-                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "advance_mode", "remarks"],
+                    column_order=visible_cols,
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
-                    selection_mode="single-row"
+                    selection_mode="single-row",
+                    key="upcoming_grid" # Unique key
                 )
 
-                if event.selection.rows:
-                    selected_index = event.selection.rows[0]
+                if event_upcoming.selection.rows:
+                    selected_index = event_upcoming.selection.rows[0]
                     selected_db_id = display_df.iloc[selected_index]['id']
                     st.session_state['edit_mode'] = True
                     st.session_state['edit_id'] = selected_db_id
                     st.rerun()
 
-        # 4. HISTORY
+        # 4. HISTORY GRID (NOW EDITABLE)
         with st.expander("📜 View Booking History"):
             if df.empty:
                 st.info("No past history.")
             else:
                 past_df = df[df['dt_obj'] < today].sort_values(by=['booking_date', 'start_time'], ascending=False)
                 if not past_df.empty:
+                    st.caption("👆 **Click on any row to Edit**")
                     past_df['S.No'] = range(1, len(past_df) + 1)
-                    st.dataframe(
+                    past_df['formatted_start'] = past_df['start_time'].apply(convert_to_12h)
+                    past_df['formatted_end'] = past_df['end_time'].apply(convert_to_12h)
+                    
+                    event_history = st.dataframe(
                         past_df,
-                        column_order=["S.No", "booking_date", "start_time", "end_time", "booked_by", "mobile_number", "total_charges"],
+                        column_config=grid_cols,
+                        column_order=visible_cols,
+                        use_container_width=True,
                         hide_index=True,
-                        use_container_width=True
+                        on_select="rerun",  # Enabled Selection
+                        selection_mode="single-row",
+                        key="history_grid" # Unique key
                     )
+                    
+                    # HISTORY SELECTION LOGIC
+                    if event_history.selection.rows:
+                        selected_index = event_history.selection.rows[0]
+                        selected_db_id = past_df.iloc[selected_index]['id']
+                        st.session_state['edit_mode'] = True
+                        st.session_state['edit_id'] = selected_db_id
+                        st.rerun()
+                        
+                    st.divider()
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         df.drop(columns=['dt_obj'], errors='ignore').to_excel(writer, index=False)
