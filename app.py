@@ -38,9 +38,8 @@ def get_time_slots():
         start += timedelta(minutes=30)
     return slots
 
-def format_wa_message(row_data):
-    """Formats a single booking according to user requirements"""
-    # row_data should be a dictionary or Series
+def format_wa_group_msg(row_data):
+    """Format for Group: Date#Day#Time#Name#Mobile#Fee#Advance#Balance#"""
     dt = pd.to_datetime(row_data['booking_date'])
     date_str = dt.strftime("%d/%m/%Y")
     day_str = dt.strftime("%A")
@@ -53,10 +52,24 @@ def format_wa_message(row_data):
     )
     return msg
 
+def format_wa_personal_msg(row_data):
+    """Personal message for the customer"""
+    time_range = f"{convert_to_12h(row_data['start_time'])} to {convert_to_12h(row_data['end_time'])}"
+    msg = (
+        f"Hello {row_data['booked_by']},\n\n"
+        f"This is from *Sai Star Ground*. Your booking is confirmed for:\n"
+        f"📅 *Date:* {pd.to_datetime(row_data['booking_date']).strftime('%d-%b-%Y')}\n"
+        f"⏰ *Time:* {time_range}\n"
+        f"💰 *Total Fees:* ₹{int(row_data['total_charges'])}\n"
+        f"✅ *Advance:* ₹{int(row_data['advance_paid'])}\n"
+        f"⏳ *Balance:* ₹{int(row_data['remaining_due'])}\n\n"
+        f"See you at the ground! 🏏"
+    )
+    return msg
+
 def init_session_state():
     if 'form_id' not in st.session_state: st.session_state['form_id'] = 0 
     if 'edit_mode' not in st.session_state: st.session_state['edit_mode'] = False
-    if 'edit_id' not in st.session_state: st.session_state['edit_id'] = None
     if 'success_msg' not in st.session_state: st.session_state['success_msg'] = None
     if 'last_added_id' not in st.session_state: st.session_state['last_added_id'] = None
 
@@ -65,7 +78,6 @@ def get_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        if df.empty: return pd.DataFrame(columns=EXPECTED_HEADERS)
         df.columns = [str(c).lower().strip() for c in df.columns]
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
@@ -73,7 +85,6 @@ def get_data():
         money_cols = ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in money_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-        df['total_hours'] = pd.to_numeric(df['total_hours'], errors='coerce').fillna(0.0)
         df['mobile_number'] = df['mobile_number'].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
         return df
     except: return pd.DataFrame(columns=EXPECTED_HEADERS)
@@ -86,12 +97,12 @@ def save_data(df):
 # 3. MAIN APP
 # -----------------------------------------------------------------------------
 def main():
-    st.markdown("""<style>.block-container {padding-top: 0rem !important;} header {visibility: hidden;}</style>""", unsafe_allow_html=True)
+    st.markdown("""<style>.block-container {padding-top: 1rem !important;} header {visibility: hidden;}</style>""", unsafe_allow_html=True)
     
     logo_file = "Sai_Star_logo__2_-removebg-preview.png"
     if os.path.exists(logo_file):
         c1, c2, c3 = st.columns([3, 2, 3]); c2.image(logo_file, use_container_width=True)
-    else: st.markdown("<h2 style='text-align: center;'>🏏 Sai Star Booking Manager</h2>", unsafe_allow_html=True)
+    else: st.title("🏏 Sai Star Booking Manager")
     
     init_session_state()
     df = get_data()
@@ -107,8 +118,8 @@ def main():
             e_name = c2.text_input("Name", value=record['booked_by'])
             e_mobile = c3.text_input("Mobile", value=record['mobile_number'])
             
-            c4, c5, c6 = st.columns(3)
             ts = get_time_slots()
+            c4, c5, c6 = st.columns(3)
             e_start = c4.selectbox("Start", ts, index=ts.index(record['start_time']) if record['start_time'] in ts else 0, format_func=convert_to_12h)
             e_end = c5.selectbox("End", ts, index=ts.index(record['end_time']) if record['end_time'] in ts else 0, format_func=convert_to_12h)
             e_rate = c6.number_input("Rate", value=int(record['rate_per_hour']))
@@ -123,14 +134,11 @@ def main():
                 tot = int(dur * e_rate)
                 idx = df.index[df['id'] == st.session_state['edit_id']][0]
                 df.loc[idx, ['booking_date','booked_by','mobile_number','start_time','end_time','total_charges','advance_paid','balance_paid','remaining_due','advance_mode']] = [e_date.strftime("%Y-%m-%d"), e_name, e_mobile, e_start, e_end, tot, e_adv, e_bal, int(tot-e_adv-e_bal), e_mode]
-                save_data(df)
-                st.session_state.update({'edit_mode': False, 'success_msg': "Updated!"})
-                st.rerun()
+                save_data(df); st.session_state.update({'edit_mode': False, 'success_msg': "Updated!"}); st.rerun()
             if st.form_submit_button("Cancel"): st.session_state['edit_mode'] = False; st.rerun()
 
     # --- MAIN SCREEN ---
     else:
-        # Add New
         with st.expander("➕ Add New Booking"):
             with st.form("add_form"):
                 fid = st.session_state['form_id']
@@ -139,8 +147,8 @@ def main():
                 b_name = c2.text_input("Name", key=f"n{fid}")
                 b_mobile = c3.text_input("Mobile", key=f"m{fid}")
                 
-                c4, c5, c6 = st.columns(3)
                 ts = get_time_slots()
+                c4, c5, c6 = st.columns(3)
                 b_start = c4.selectbox("Start", ts, index=40, format_func=convert_to_12h, key=f"s{fid}")
                 b_end = c5.selectbox("End", ts, index=44, format_func=convert_to_12h, key=f"e{fid}")
                 b_rate = c6.number_input("Rate", value=1000, key=f"r{fid}")
@@ -157,14 +165,18 @@ def main():
                     st.session_state.update({'last_added_id': nid, 'success_msg': "Booking Added!", 'form_id': fid+1})
                     st.rerun()
 
-        # Success Msg & WhatsApp Link
+        # Success Msg & Dual WhatsApp Buttons
         if st.session_state['success_msg']:
             st.success(st.session_state['success_msg'])
             if st.session_state['last_added_id']:
                 last_rec = get_data().query(f"id == {st.session_state['last_added_id']}").iloc[0]
-                wa_text = format_wa_message(last_rec)
-                st.link_button("📲 Send WhatsApp to Group", f"https://wa.me/?text={urllib.parse.quote(wa_text)}")
-            if st.button("Clear"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
+                wa_group = format_wa_group_msg(last_rec)
+                wa_personal = format_wa_personal_msg(last_rec)
+                
+                col_a, col_b = st.columns(2)
+                col_a.link_button("📢 Send to Group", f"https://wa.me/?text={urllib.parse.quote(wa_group)}", use_container_width=True)
+                col_b.link_button(f"👤 Send to {last_rec['booked_by']}", f"https://wa.me/{last_rec['mobile_number']}?text={urllib.parse.quote(wa_personal)}", use_container_width=True)
+            if st.button("Close Notifications"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
 
         # Upcoming Grid
         st.subheader("📅 Upcoming Bookings")
@@ -174,17 +186,25 @@ def main():
             
             if not future_df.empty:
                 # Share All Button
-                all_msg = "🏏 *SAI STAR SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_message(row) for _, row in future_df.iterrows()])
-                st.link_button("📋 Share Full List on WhatsApp", f"https://wa.me/?text={urllib.parse.quote(all_msg)}")
+                all_msg = "🏏 *SAI STAR SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_group_msg(row) for _, row in future_df.iterrows()])
+                st.link_button("📋 Share Full List to Group", f"https://wa.me/?text={urllib.parse.quote(all_msg)}")
                 
-                # Grid
-                future_df['formatted_start'] = future_df['start_time'].apply(convert_to_12h)
-                future_df['formatted_end'] = future_df['end_time'].apply(convert_to_12h)
-                grid_cols = {"booking_date": "Date", "formatted_start": "Start", "formatted_end": "End", "booked_by": "Name", "mobile_number": "Mobile", "total_charges": st.column_config.NumberColumn("Total", format="₹%d"), "advance_paid": st.column_config.NumberColumn("Adv.", format="₹%d"), "remaining_due": st.column_config.NumberColumn("Due", format="₹%d")}
-                ev = st.dataframe(future_df, column_config=grid_cols, column_order=["booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due"], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="u_grid")
-                if ev.selection.rows:
-                    st.session_state.update({'edit_mode': True, 'edit_id': future_df.iloc[ev.selection.rows[0]]['id']})
-                    st.rerun()
+                # We use columns to show the "Quick Message" feature
+                for _, row in future_df.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+                        c1.markdown(f"**{pd.to_datetime(row['booking_date']).strftime('%d/%m')}** | {convert_to_12h(row['start_time'])}")
+                        c2.markdown(f"**{row['booked_by']}**")
+                        c3.markdown(f"Due: ₹{row['remaining_due']}")
+                        
+                        # Direct Chat Button
+                        personal_msg = format_wa_personal_msg(row)
+                        c4.link_button("📲 Chat", f"https://wa.me/{row['mobile_number']}?text={urllib.parse.quote(personal_msg)}")
+                        
+                        # Re-using select logic for editing
+                        if c1.button("Edit", key=f"ed_{row['id']}"):
+                            st.session_state.update({'edit_mode': True, 'edit_id': row['id']})
+                            st.rerun()
 
         # History
         with st.expander("📜 History"):
