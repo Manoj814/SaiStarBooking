@@ -141,9 +141,7 @@ def main():
             e_bal = c8.number_input("Balance Paid", value=int(record['balance_paid']))
             e_mode = c9.selectbox("Payment Mode", PAYMENT_MODES, index=PAYMENT_MODES.index(record['advance_mode']) if record['advance_mode'] in PAYMENT_MODES else 0)
             
-            # Action Buttons in the Form
             col_save, col_del, col_can = st.columns([1, 1, 3])
-            
             if col_save.form_submit_button("💾 Save", type="primary"):
                 dur = (datetime.strptime(e_end, "%H:%M") - datetime.strptime(e_start, "%H:%M")).total_seconds() / 3600
                 tot = int(dur * e_rate)
@@ -151,19 +149,14 @@ def main():
                 df.loc[idx, ['booking_date','booked_by','mobile_number','start_time','end_time','total_hours','rate_per_hour','total_charges','advance_paid','balance_paid','remaining_due','advance_mode']] = [
                     e_date.strftime("%Y-%m-%d"), e_name, e_mobile, e_start, e_end, dur, int(e_rate), tot, int(e_adv), int(e_bal), int(tot-e_adv-e_bal), e_mode
                 ]
-                save_data(df)
-                st.session_state.update({'edit_mode': False, 'success_msg': "✅ Booking Updated!"})
-                st.rerun()
+                save_data(df); st.session_state.update({'edit_mode': False, 'success_msg': "✅ Updated!"}); st.rerun()
 
             if col_del.form_submit_button("🗑️ Delete"):
                 df = df[df['id'] != st.session_state['edit_id']]
-                save_data(df)
-                st.session_state.update({'edit_mode': False, 'success_msg': "🗑️ Booking Deleted Successfully!"})
-                st.rerun()
+                save_data(df); st.session_state.update({'edit_mode': False, 'success_msg': "🗑️ Deleted!"}); st.rerun()
 
             if col_can.form_submit_button("Cancel"):
-                st.session_state['edit_mode'] = False
-                st.rerun()
+                st.session_state['edit_mode'] = False; st.rerun()
 
     # --- MAIN SCREEN ---
     else:
@@ -176,9 +169,28 @@ def main():
             
             c4, c5, c6 = st.columns(3)
             start_ts = get_time_slots(6, 23)
-            b_start = c4.selectbox("Start Time", start_ts, index=0, format_func=convert_to_12h, key=f"s{fid}")
+            
+            # Default Start: 8 PM (20:00)
+            s_idx = start_ts.index("20:00") if "20:00" in start_ts else 0
+            b_start = c4.selectbox("Start Time", start_ts, index=s_idx, format_func=convert_to_12h, key=f"s{fid}")
+            
+            # Logic for Dynamic End Time Default
             end_ts = get_time_slots(6, 23, after_time=b_start)
-            b_end = c5.selectbox("End Time", end_ts, index=1 if len(end_ts)>1 else 0, format_func=convert_to_12h, key=f"e{fid}")
+            
+            # --- DYNAMIC END TIME LOGIC ---
+            if b_start == "20:00":
+                target_end = "21:00" # 9 PM default
+            elif b_start == "21:00":
+                target_end = "22:30" # 10:30 PM default if start is 9 PM
+            else:
+                target_end = None # Will default to index 1 (1 hour later) below
+            
+            if target_end and target_end in end_ts:
+                e_idx = end_ts.index(target_end)
+            else:
+                e_idx = 1 if len(end_ts) > 1 else 0 # Default to 1 hour after start if no logic matches
+            
+            b_end = c5.selectbox("End Time", end_ts, index=e_idx, format_func=convert_to_12h, key=f"e{fid}")
             b_rate = c6.number_input("Rate per Hour", value=1000, key=f"r{fid}")
             
             c7, c8 = st.columns(2)
@@ -208,7 +220,7 @@ def main():
                     wa_grp = format_wa_group_msg(last_rec)
                     ca.link_button("📢 Share to Group", f"https://wa.me/?text={urllib.parse.quote(wa_grp)}", use_container_width=True)
                     cb.link_button(f"👤 Message {last_rec['booked_by']}", f"https://wa.me/{clean_phone_number(last_rec['mobile_number'])}?text={urllib.parse.quote(format_wa_personal_msg(last_rec))}", use_container_width=True)
-            if st.button("Close"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
+            if st.button("Close Notification"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
 
         # Upcoming Grid
         st.subheader("📅 Upcoming Bookings")
