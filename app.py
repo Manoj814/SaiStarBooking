@@ -57,7 +57,7 @@ def format_wa_personal_msg(row_data):
     time_range = f"{convert_to_12h(row_data['start_time'])} to {convert_to_12h(row_data['end_time'])}"
     msg = (
         f"Hello {row_data['booked_by']},\n\n"
-        f"This is from *Sai Star Ground*. Your booking is confirmed for:\n"
+        f"This is from *Sai Star Ground*. Your booking is confirmed:\n"
         f"📅 *Date:* {pd.to_datetime(row_data['booking_date']).strftime('%d-%b-%Y')}\n"
         f"⏰ *Time:* {time_range}\n"
         f"💰 *Total Fees:* ₹{int(row_data['total_charges'])}\n"
@@ -70,6 +70,7 @@ def format_wa_personal_msg(row_data):
 def init_session_state():
     if 'form_id' not in st.session_state: st.session_state['form_id'] = 0 
     if 'edit_mode' not in st.session_state: st.session_state['edit_mode'] = False
+    if 'edit_id' not in st.session_state: st.session_state['edit_id'] = None
     if 'success_msg' not in st.session_state: st.session_state['success_msg'] = None
     if 'last_added_id' not in st.session_state: st.session_state['last_added_id'] = None
 
@@ -165,7 +166,7 @@ def main():
                     st.session_state.update({'last_added_id': nid, 'success_msg': "Booking Added!", 'form_id': fid+1})
                     st.rerun()
 
-        # Success Msg & Dual WhatsApp Buttons
+        # Success Message with Quick Links
         if st.session_state['success_msg']:
             st.success(st.session_state['success_msg'])
             if st.session_state['last_added_id']:
@@ -175,8 +176,9 @@ def main():
                 
                 col_a, col_b = st.columns(2)
                 col_a.link_button("📢 Send to Group", f"https://wa.me/?text={urllib.parse.quote(wa_group)}", use_container_width=True)
-                col_b.link_button(f"👤 Send to {last_rec['booked_by']}", f"https://wa.me/{last_rec['mobile_number']}?text={urllib.parse.quote(wa_personal)}", use_container_width=True)
-            if st.button("Close Notifications"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
+                # Addresses the mobile number directly
+                col_b.link_button(f"👤 Message {last_rec['booked_by']}", f"https://wa.me/{last_rec['mobile_number']}?text={urllib.parse.quote(wa_personal)}", use_container_width=True)
+            if st.button("Close Notification"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
 
         # Upcoming Grid
         st.subheader("📅 Upcoming Bookings")
@@ -185,26 +187,45 @@ def main():
             future_df = df[df['dt_obj'] >= today].sort_values(['booking_date', 'start_time'])
             
             if not future_df.empty:
-                # Share All Button
+                # Share Full Schedule
                 all_msg = "🏏 *SAI STAR SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_group_msg(row) for _, row in future_df.iterrows()])
                 st.link_button("📋 Share Full List to Group", f"https://wa.me/?text={urllib.parse.quote(all_msg)}")
                 
-                # We use columns to show the "Quick Message" feature
-                for _, row in future_df.iterrows():
-                    with st.container(border=True):
-                        c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-                        c1.markdown(f"**{pd.to_datetime(row['booking_date']).strftime('%d/%m')}** | {convert_to_12h(row['start_time'])}")
-                        c2.markdown(f"**{row['booked_by']}**")
-                        c3.markdown(f"Due: ₹{row['remaining_due']}")
-                        
-                        # Direct Chat Button
-                        personal_msg = format_wa_personal_msg(row)
-                        c4.link_button("📲 Chat", f"https://wa.me/{row['mobile_number']}?text={urllib.parse.quote(personal_msg)}")
-                        
-                        # Re-using select logic for editing
-                        if c1.button("Edit", key=f"ed_{row['id']}"):
-                            st.session_state.update({'edit_mode': True, 'edit_id': row['id']})
-                            st.rerun()
+                # GRID RESTORED
+                # Pre-calculating display columns
+                future_df['S.No'] = range(1, len(future_df) + 1)
+                future_df['formatted_start'] = future_df['start_time'].apply(convert_to_12h)
+                future_df['formatted_end'] = future_df['end_time'].apply(convert_to_12h)
+                
+                # We create a column for the WhatsApp URL for direct access in grid
+                future_df['wa_link'] = future_df.apply(lambda r: f"https://wa.me/{r['mobile_number']}?text={urllib.parse.quote(format_wa_personal_msg(r))}", axis=1)
+
+                grid_cols = {
+                    "S.No": st.column_config.NumberColumn("S.No", width="small"),
+                    "booking_date": "Date",
+                    "formatted_start": "Start",
+                    "formatted_end": "End",
+                    "booked_by": "Name",
+                    "mobile_number": "Mobile",
+                    "total_charges": st.column_config.NumberColumn("Total", format="₹%d"),
+                    "remaining_due": st.column_config.NumberColumn("Due", format="₹%d"),
+                    "wa_link": st.column_config.LinkColumn("WhatsApp", display_text="Chat 📲")
+                }
+
+                ev = st.dataframe(
+                    future_df, 
+                    column_config=grid_cols, 
+                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "remaining_due", "wa_link"], 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    on_select="rerun", 
+                    selection_mode="single-row", 
+                    key="u_grid"
+                )
+
+                if ev.selection.rows:
+                    st.session_state.update({'edit_mode': True, 'edit_id': future_df.iloc[ev.selection.rows[0]]['id']})
+                    st.rerun()
 
         # History
         with st.expander("📜 History"):
