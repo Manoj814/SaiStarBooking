@@ -84,7 +84,7 @@ def init_session_state():
     if 'success_msg' not in st.session_state: st.session_state['success_msg'] = None
     if 'last_added_id' not in st.session_state: st.session_state['last_added_id'] = None
 
-# --- DATA FUNCTIONS ---
+# --- UPDATED DATA FUNCTION WITH AUTOMATIC SORTING LOGIC ---
 def get_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
@@ -92,11 +92,23 @@ def get_data():
         df.columns = [str(c).lower().strip() for c in df.columns]
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
+        
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
         money_cols = ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
         for col in money_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        
         df['mobile_number'] = df['mobile_number'].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
+        
+        # --- NEW SORTING CONVERSION ---
+        if not df.empty:
+            # Create a true date object
+            df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
+            # Create a true time object for sorting (HH:MM:SS)
+            df['sort_time'] = pd.to_datetime(df['start_time'], format='%H:%M').dt.time
+            # Sort the entire dataframe globally by Date then Time
+            df = df.sort_values(by=['dt_obj', 'sort_time'], ascending=[True, True])
+        
         return df
     except: return pd.DataFrame(columns=EXPECTED_HEADERS)
 
@@ -116,12 +128,6 @@ def main():
     
     init_session_state()
     df = get_data()
-    
-    if not df.empty:
-        # Convert booking_date to datetime and start_time to a sortable time object
-        df['dt_obj'] = pd.to_datetime(df['booking_date']).dt.date
-        # Create a helper column specifically for sorting (HH:MM format)
-        df['sort_time'] = pd.to_datetime(df['start_time'], format='%H:%M').dt.time
 
     # --- EDIT SCREEN ---
     if st.session_state['edit_mode']:
@@ -174,7 +180,6 @@ def main():
             b_start = c4.selectbox("Start", ts_start, index=ts_start.index("20:00"), format_func=convert_to_12h, key=f"s{fid}")
             ts_end = get_time_slots(6, 23, after_time=b_start)
             
-            # Smart defaults for end time
             e_def = "21:00" if b_start == "20:00" else ("22:30" if b_start == "21:00" else None)
             e_idx = ts_end.index(e_def) if e_def in ts_end else 0
             
@@ -189,7 +194,7 @@ def main():
                 dur = (datetime.strptime(b_end, "%H:%M") - datetime.strptime(b_start, "%H:%M")).total_seconds() / 3600
                 tot = int(dur * b_rate)
                 nid = 1 if df.empty else df['id'].max() + 1
-                new_row = pd.DataFrame([{"id": nid, "booking_date": b_date.strftime("%Y-%m-%d"), "start_time": b_start, "end_time": b_end, "booked_by": b_name, "mobile_number": b_mobile, "total_charges": tot, "advance_paid": b_adv, "remaining_due": tot-b_adv, "advance_mode": b_mode}])
+                new_row = pd.DataFrame([{"id": nid, "booking_date": b_date.strftime("%Y-%m-%d"), "start_time": b_start, "end_time": b_end, "total_hours": dur, "rate_per_hour": int(b_rate), "booked_by": b_name, "mobile_number": b_mobile, "total_charges": tot, "advance_paid": b_adv, "remaining_due": tot-b_adv, "advance_mode": b_mode}])
                 save_data(pd.concat([df, new_row]))
                 st.session_state.update({'last_added_id': nid, 'success_msg': "✅ Added!", 'form_id': fid+1})
                 st.rerun()
@@ -197,23 +202,27 @@ def main():
         if st.session_state['success_msg']:
             st.success(st.session_state['success_msg'])
             if st.session_state['last_added_id']:
-                last = get_data().query(f"id == {st.session_state['last_added_id']}").iloc[0]
-                ca, cb = st.columns(2)
-                ca.link_button("📢 Group WhatsApp", f"https://wa.me/?text={urllib.parse.quote(format_wa_group_msg(last))}")
-                cb.link_button(f"👤 Message {last['booked_by']}", f"https://wa.me/{clean_phone_number(last['mobile_number'])}?text={urllib.parse.quote(format_wa_personal_msg(last))}")
+                current_df = get_data() # This fetches freshly sorted data
+                try:
+                    last = current_df.query(f"id == {st.session_state['last_added_id']}").iloc[0]
+                    ca, cb = st.columns(2)
+                    ca.link_button("📢 Group WhatsApp", f"https://wa.me/?text={urllib.parse.quote(format_wa_group_msg(last))}")
+                    cb.link_button(f"👤 Message {last['booked_by']}", f"https://wa.me/{clean_phone_number(last['mobile_number'])}?text={urllib.parse.quote(format_wa_personal_msg(last))}")
+                except: pass
             if st.button("Close Notifications"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
 
-        # --- FIX: SORTING BY DATE AND HELPER TIME COLUMN ---
         st.subheader("📅 Upcoming Bookings")
         if not df.empty:
             today = datetime.now().date()
-            # We sort by the date object first, then the actual time object
-            future_df = df[df['dt_obj'] >= today].sort_values(by=['dt_obj', 'sort_time'], ascending=[True, True])
+            # Since df is sorted in get_data, we just filter it
+            future_df = df[df['dt_obj'] >= today]
             
             if not future_df.empty:
                 all_msg = "🏏 *SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_group_msg(row) for _, row in future_df.iterrows()])
                 st.link_button("📋 Share Full Schedule", f"https://wa.me/?text={urllib.parse.quote(all_msg)}")
                 
+                # Re-calculate S.No based on current filtered view
+                future_df = future_df.copy()
                 future_df['S.No'] = range(1, len(future_df) + 1)
                 future_df['formatted_start'] = future_df['start_time'].apply(convert_to_12h)
                 future_df['formatted_end'] = future_df['end_time'].apply(convert_to_12h)
@@ -241,7 +250,7 @@ def main():
             else: st.info("No bookings.")
 
         with st.expander("📜 History"):
-            past_df = df[df['dt_obj'] < today].sort_values(['dt_obj', 'sort_time'], ascending=[False, False])
+            past_df = df[df['dt_obj'] < today].sort_values(by=['dt_obj', 'sort_time'], ascending=[False, False])
             if not past_df.empty:
                 st.dataframe(past_df, use_container_width=True, hide_index=True)
 
