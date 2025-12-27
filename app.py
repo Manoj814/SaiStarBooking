@@ -139,7 +139,7 @@ def main():
             c7, c8, c9 = st.columns(3)
             e_adv = c7.number_input("Advance Amount", value=int(record['advance_paid']))
             e_bal = c8.number_input("Balance Paid", value=int(record['balance_paid']))
-            e_mode = c9.selectbox("Payment Mode", PAYMENT_MODES, index=PAYMENT_MODES.index(record['advance_mode']) if record['advance_mode'] in PAYMENT_MODES else 0)
+            e_mode = c9.selectbox("Mode", PAYMENT_MODES, index=PAYMENT_MODES.index(record['advance_mode']) if record['advance_mode'] in PAYMENT_MODES else 0)
             
             col_save, col_del, col_can = st.columns([1, 1, 3])
             if col_save.form_submit_button("💾 Save", type="primary"):
@@ -169,26 +169,15 @@ def main():
             
             c4, c5, c6 = st.columns(3)
             start_ts = get_time_slots(6, 23)
-            
-            # Default Start: 8 PM (20:00)
             s_idx = start_ts.index("20:00") if "20:00" in start_ts else 0
             b_start = c4.selectbox("Start Time", start_ts, index=s_idx, format_func=convert_to_12h, key=f"s{fid}")
             
-            # Logic for Dynamic End Time Default
             end_ts = get_time_slots(6, 23, after_time=b_start)
+            if b_start == "20:00": target_end = "21:00"
+            elif b_start == "21:00": target_end = "22:30"
+            else: target_end = None
             
-            # --- DYNAMIC END TIME LOGIC ---
-            if b_start == "20:00":
-                target_end = "21:00" # 9 PM default
-            elif b_start == "21:00":
-                target_end = "22:30" # 10:30 PM default if start is 9 PM
-            else:
-                target_end = None # Will default to index 1 (1 hour later) below
-            
-            if target_end and target_end in end_ts:
-                e_idx = end_ts.index(target_end)
-            else:
-                e_idx = 1 if len(end_ts) > 1 else 0 # Default to 1 hour after start if no logic matches
+            e_idx = end_ts.index(target_end) if target_end and target_end in end_ts else (1 if len(end_ts) > 1 else 0)
             
             b_end = c5.selectbox("End Time", end_ts, index=e_idx, format_func=convert_to_12h, key=f"e{fid}")
             b_rate = c6.number_input("Rate per Hour", value=1000, key=f"r{fid}")
@@ -198,8 +187,7 @@ def main():
             b_mode = c8.selectbox("Payment Mode", PAYMENT_MODES, key=f"mo{fid}")
             
             if st.button("✅ Confirm Booking", type="primary", key=f"btn{fid}"):
-                if b_name == "":
-                    st.error("Please enter a name.")
+                if b_name == "": st.error("Please enter a name.")
                 else:
                     dur = (datetime.strptime(b_end, "%H:%M") - datetime.strptime(b_start, "%H:%M")).total_seconds() / 3600
                     tot, nid = int(dur * b_rate), 1 if df.empty else df['id'].max() + 1
@@ -208,7 +196,6 @@ def main():
                     st.session_state.update({'last_added_id': nid, 'success_msg': "✅ Booking Added!", 'form_id': fid+1})
                     st.rerun()
 
-        # Success Msg & WhatsApp Buttons
         if st.session_state['success_msg']:
             st.success(st.session_state['success_msg'])
             if st.session_state['last_added_id']:
@@ -220,13 +207,14 @@ def main():
                     wa_grp = format_wa_group_msg(last_rec)
                     ca.link_button("📢 Share to Group", f"https://wa.me/?text={urllib.parse.quote(wa_grp)}", use_container_width=True)
                     cb.link_button(f"👤 Message {last_rec['booked_by']}", f"https://wa.me/{clean_phone_number(last_rec['mobile_number'])}?text={urllib.parse.quote(format_wa_personal_msg(last_rec))}", use_container_width=True)
-            if st.button("Close Notification"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
+            if st.button("Close"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
 
-        # Upcoming Grid
+        # --- UPDATED SORTING IN UPCOMING GRID ---
         st.subheader("📅 Upcoming Bookings")
         if not df.empty:
             today = datetime.now().date()
-            future_df = df[df['dt_obj'] >= today].sort_values(['booking_date', 'start_time'])
+            # Primary sort by Date, Secondary sort by Start Time
+            future_df = df[df['dt_obj'] >= today].sort_values(['booking_date', 'start_time'], ascending=[True, True])
             
             if not future_df.empty:
                 all_msg = "🏏 *SAI STAR SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_group_msg(row) for _, row in future_df.iterrows()])
@@ -259,7 +247,7 @@ def main():
             else: st.info("No upcoming bookings.")
 
         with st.expander("📜 History"):
-            past_df = df[df['dt_obj'] < today].sort_values('booking_date', ascending=False)
+            past_df = df[df['dt_obj'] < today].sort_values(['booking_date', 'start_time'], ascending=[False, False])
             if not past_df.empty:
                 st.dataframe(past_df, use_container_width=True, hide_index=True)
 
