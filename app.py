@@ -26,13 +26,11 @@ PAYMENT_MODES = ["Cash", "Gpay", "Pending", "Cash+Gpay"]
 
 def clean_phone_number(number):
     num_str = re.sub(r'\D', '', str(number))
-    if len(num_str) == 10:
-        return f"91{num_str}"
+    if len(num_str) == 10: return f"91{num_str}"
     return num_str
 
 def convert_to_12h(time_str):
     try:
-        # Standardize to 24h internal format first to be safe
         return datetime.strptime(time_str, "%H:%M").strftime("%I:%M %p")
     except:
         return time_str
@@ -45,10 +43,8 @@ def get_time_slots(start_h=0, end_h=23, after_time=None):
     while current <= end:
         time_str = current.strftime("%H:%M")
         if after_time:
-            if time_str > after_time:
-                slots.append(time_str)
-        else:
-            slots.append(time_str)
+            if time_str > after_time: slots.append(time_str)
+        else: slots.append(time_str)
         current += timedelta(minutes=30)
     return slots
 
@@ -57,25 +53,20 @@ def format_wa_group_msg(row_data):
     date_str = dt.strftime("%d/%m/%Y")
     day_str = dt.strftime("%A")
     time_range = f"{convert_to_12h(row_data['start_time'])} - {convert_to_12h(row_data['end_time'])}"
-    msg = (
-        f"{date_str}#{day_str}#{time_range}#{row_data['booked_by']}#\n"
-        f"{row_data['mobile_number']}#₹{int(row_data['total_charges'])}#\n"
-        f"Advance received: ₹{int(row_data['advance_paid'])}#Balance: ₹{int(row_data['remaining_due'])}#"
-    )
+    msg = (f"{date_str}#{day_str}#{time_range}#{row_data['booked_by']}#\n"
+           f"{row_data['mobile_number']}#₹{int(row_data['total_charges'])}#\n"
+           f"Advance received: ₹{int(row_data['advance_paid'])}#Balance: ₹{int(row_data['remaining_due'])}#")
     return msg
 
 def format_wa_personal_msg(row_data):
     time_range = f"{convert_to_12h(row_data['start_time'])} to {convert_to_12h(row_data['end_time'])}"
-    msg = (
-        f"Hello {row_data['booked_by']},\n\n"
-        f"This is from *Sai Star Ground*. Your booking is confirmed:\n"
-        f"📅 *Date:* {pd.to_datetime(row_data['booking_date']).strftime('%d-%b-%Y')}\n"
-        f"⏰ *Time:* {time_range}\n"
-        f"💰 *Total Fees:* ₹{int(row_data['total_charges'])}\n"
-        f"✅ *Advance:* ₹{int(row_data['advance_paid'])}\n"
-        f"⏳ *Balance:* ₹{int(row_data['remaining_due'])}\n\n"
-        f"See you at the ground! 🏏"
-    )
+    msg = (f"Hello {row_data['booked_by']},\n\n"
+           f"This is from *Sai Star Ground*. Your booking is confirmed:\n"
+           f"📅 *Date:* {pd.to_datetime(row_data['booking_date']).strftime('%d-%b-%Y')}\n"
+           f"⏰ *Time:* {time_range}\n"
+           f"💰 *Total Fees:* ₹{int(row_data['total_charges'])}\n"
+           f"✅ *Advance:* ₹{int(row_data['advance_paid'])}\n"
+           f"⏳ *Balance:* ₹{int(row_data['remaining_due'])}\n\nSee you! 🏏")
     return msg
 
 # --- DATA FUNCTIONS ---
@@ -87,35 +78,31 @@ def get_data():
         for col in EXPECTED_HEADERS:
             if col not in df.columns: df[col] = "" 
         
-        # Numeric standardizations
         df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
-        money_cols = ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']
-        for col in money_cols:
+        for col in ['rate_per_hour', 'total_charges', 'advance_paid', 'balance_paid', 'remaining_due']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
         
         df['mobile_number'] = df['mobile_number'].astype(str).str.replace(r'\.0$', '', regex=True).replace('nan', '')
         
         if not df.empty:
-            # 1. Clean Time Strings (Ensures "6:00" becomes "06:00")
-            df['start_time'] = df['start_time'].apply(lambda x: datetime.strptime(str(x), "%H:%M").strftime("%H:%M") if ":" in str(x) else x)
-            df['end_time'] = df['end_time'].apply(lambda x: datetime.strptime(str(x), "%H:%M").strftime("%H:%M") if ":" in str(x) else x)
+            # FORCE STANDARDIZED 24H TIME FOR SORTING
+            df['start_time'] = df['start_time'].apply(lambda x: datetime.strptime(str(x), "%H:%M").strftime("%H:%M") if ":" in str(x) else "00:00")
             
-            # 2. Create a hidden sort timestamp (Date + Time merged)
-            df['full_timestamp'] = pd.to_datetime(df['booking_date'].astype(str) + ' ' + df['start_time'].astype(str))
+            # CREATE NUMERIC SORT KEY: YYYYMMDDHHMM
+            df['sort_key'] = pd.to_datetime(df['booking_date']).dt.strftime('%Y%m%d') + df['start_time'].str.replace(':', '')
+            df['sort_key'] = pd.to_numeric(df['sort_key'])
             
-            # 3. Global Chronological Sort
-            df = df.sort_values(by='full_timestamp', ascending=True)
+            # GLOBAL SORT
+            df = df.sort_values(by='sort_key', ascending=True).reset_index(drop=True)
         
         return df
     except Exception as e:
-        st.error(f"Data Load Error: {e}")
+        st.error(f"Error: {e}")
         return pd.DataFrame(columns=EXPECTED_HEADERS)
 
 def save_data(df):
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Drop the helper column before saving to Google Sheets
-    if 'full_timestamp' in df.columns:
-        df = df.drop(columns=['full_timestamp'])
+    if 'sort_key' in df.columns: df = df.drop(columns=['sort_key'])
     conn.update(worksheet="Sheet1", data=df)
 
 # -----------------------------------------------------------------------------
@@ -144,13 +131,13 @@ def main():
             
             ts = get_time_slots(0, 23)
             c4, c5, c6 = st.columns(3)
-            e_start = c4.selectbox("Start Time", ts, index=ts.index(record['start_time']) if record['start_time'] in ts else 0, format_func=convert_to_12h)
+            e_start = c4.selectbox("Start", ts, index=ts.index(record['start_time']) if record['start_time'] in ts else 0, format_func=convert_to_12h)
             end_ts_edit = get_time_slots(0, 23, after_time=e_start)
-            e_end = c5.selectbox("End Time", end_ts_edit, index=end_ts_edit.index(record['end_time']) if record['end_time'] in end_ts_edit else 0, format_func=convert_to_12h)
-            e_rate = c6.number_input("Rate per Hour", value=int(record['rate_per_hour']))
+            e_end = c5.selectbox("End", end_ts_edit, index=end_ts_edit.index(record['end_time']) if record['end_time'] in end_ts_edit else 0, format_func=convert_to_12h)
+            e_rate = c6.number_input("Rate", value=int(record['rate_per_hour']))
             
             c7, c8, c9 = st.columns(3)
-            e_adv = c7.number_input("Advance Amount", value=int(record['advance_paid']))
+            e_adv = c7.number_input("Advance", value=int(record['advance_paid']))
             e_bal = c8.number_input("Balance Paid", value=int(record['balance_paid']))
             e_mode = c9.selectbox("Mode", PAYMENT_MODES, index=PAYMENT_MODES.index(record['advance_mode']) if record['advance_mode'] in PAYMENT_MODES else 0)
             
@@ -162,8 +149,7 @@ def main():
                 df.loc[idx, ['booking_date','booked_by','mobile_number','start_time','end_time','total_charges','advance_paid','balance_paid','remaining_due','advance_mode']] = [e_date.strftime("%Y-%m-%d"), e_name, e_mobile, e_start, e_end, tot, e_adv, e_bal, int(tot-e_adv-e_bal), e_mode]
                 save_data(df); st.session_state.update({'edit_mode': False}); st.rerun()
             if col_del.form_submit_button("🗑️ Delete"):
-                df = df[df['id'] != st.session_state['edit_id']]
-                save_data(df); st.session_state.update({'edit_mode': False}); st.rerun()
+                save_data(df[df['id'] != st.session_state['edit_id']]); st.session_state.update({'edit_mode': False}); st.rerun()
             if col_can.form_submit_button("Cancel"): st.session_state['edit_mode'] = False; st.rerun()
 
     # --- MAIN SCREEN ---
@@ -179,39 +165,30 @@ def main():
                 c4, c5, c6 = st.columns(3)
                 b_start = c4.selectbox("Start", ts_start, index=ts_start.index("20:00"), format_func=convert_to_12h)
                 ts_end = get_time_slots(6, 23, after_time=b_start)
-                
                 e_def = "21:00" if b_start == "20:00" else ("22:30" if b_start == "21:00" else None)
-                e_idx = ts_end.index(e_def) if e_def in ts_end else 0
-                
-                b_end = c5.selectbox("End", ts_end, index=e_idx, format_func=convert_to_12h)
+                b_end = c5.selectbox("End", ts_end, index=ts_end.index(e_def) if e_def in ts_end else 0, format_func=convert_to_12h)
                 b_rate = c6.number_input("Rate", value=1000)
+                b_adv = st.number_input("Advance", value=0)
                 
-                c7, c8 = st.columns(2)
-                b_adv = c7.number_input("Advance", value=0)
-                b_mode = c8.selectbox("Mode", PAYMENT_MODES)
-                
-                if st.form_submit_button("Confirm Booking", type="primary"):
+                if st.form_submit_button("Confirm", type="primary"):
                     dur = (datetime.strptime(b_end, "%H:%M") - datetime.strptime(b_start, "%H:%M")).total_seconds() / 3600
                     tot = int(dur * b_rate)
                     nid = 1 if df.empty else df['id'].max() + 1
-                    new_row = pd.DataFrame([{"id": nid, "booking_date": b_date.strftime("%Y-%m-%d"), "start_time": b_start, "end_time": b_end, "booked_by": b_name, "mobile_number": b_mobile, "total_charges": tot, "advance_paid": b_adv, "remaining_due": tot-b_adv, "advance_mode": b_mode}])
-                    save_data(pd.concat([df, new_row]))
-                    st.session_state.update({'last_added_id': nid, 'success_msg': "✅ Added!"})
-                    st.rerun()
+                    new_row = pd.DataFrame([{"id": nid, "booking_date": b_date.strftime("%Y-%m-%d"), "start_time": b_start, "end_time": b_end, "booked_by": b_name, "mobile_number": b_mobile, "total_charges": tot, "advance_paid": b_adv, "remaining_due": tot-b_adv, "advance_mode": "Pending"}])
+                    save_data(pd.concat([df, new_row])); st.session_state.update({'last_added_id': nid, 'success_msg': "✅ Added!"}); st.rerun()
 
         if st.session_state.get('success_msg'):
             st.success(st.session_state['success_msg'])
             last = get_data().query(f"id == {st.session_state['last_added_id']}").iloc[0]
             ca, cb = st.columns(2)
-            ca.link_button("📢 Group WhatsApp", f"https://wa.me/?text={urllib.parse.quote(format_wa_group_msg(last))}")
+            ca.link_button("📢 Group WA", f"https://wa.me/?text={urllib.parse.quote(format_wa_group_msg(last))}")
             cb.link_button(f"👤 Message {last['booked_by']}", f"https://wa.me/{clean_phone_number(last['mobile_number'])}?text={urllib.parse.quote(format_wa_personal_msg(last))}")
-            if st.button("Close Notifications"): st.session_state.update({'success_msg': None, 'last_added_id': None}); st.rerun()
+            if st.button("Close Notifications"): st.session_state.update({'success_msg': None}); st.rerun()
 
         st.subheader("📅 Upcoming Bookings")
         if not df.empty:
-            now = datetime.now()
-            # Filter for bookings from today onwards
-            future_df = df[df['full_timestamp'] >= datetime(now.year, now.month, now.day)].copy()
+            now_key = int(datetime.now().strftime('%Y%m%d%H%M'))
+            future_df = df[df['sort_key'] >= now_key].copy()
             
             if not future_df.empty:
                 all_msg = "🏏 *SCHEDULE* 🏏\n\n" + "\n---\n".join([format_wa_group_msg(row) for _, row in future_df.iterrows()])
@@ -232,20 +209,14 @@ def main():
                     "wa_link": st.column_config.LinkColumn("WhatsApp", display_text="Chat 📲")
                 }
 
-                ev = st.dataframe(
-                    future_df, 
-                    column_config=grid_cols, 
-                    column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "wa_link"], 
-                    use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="u_grid"
-                )
+                ev = st.dataframe(future_df, column_config=grid_cols, column_order=["S.No", "booking_date", "formatted_start", "formatted_end", "booked_by", "mobile_number", "total_charges", "advance_paid", "remaining_due", "wa_link"], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", key="u_grid")
                 if ev.selection.rows:
-                    st.session_state.update({'edit_mode': True, 'edit_id': future_df.iloc[ev.selection.rows[0]]['id']})
-                    st.rerun()
+                    st.session_state.update({'edit_mode': True, 'edit_id': future_df.iloc[ev.selection.rows[0]]['id']}); st.rerun()
 
         with st.expander("📜 History"):
-            past_df = df[df['full_timestamp'] < datetime(now.year, now.month, now.day)].sort_values(by='full_timestamp', ascending=False)
+            past_df = df[df['sort_key'] < now_key].sort_values(by='sort_key', ascending=False)
             if not past_df.empty:
-                st.dataframe(past_df.drop(columns=['full_timestamp']), use_container_width=True, hide_index=True)
+                st.dataframe(past_df.drop(columns=['sort_key']), use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     main()
