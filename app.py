@@ -188,4 +188,16 @@ def academy_management():
                 if st.form_submit_button("Record Payment"):
                     p_id = str(uuid.uuid4())[:8]
                     new_p = pd.DataFrame([{"ID": p_id, "Student": s_data['ID'], "Date": datetime.now().strftime("%Y-%m-%d"), "Month": f_month, "Year": 2026, "Amount": f_amt, "Payment Mode": "Gpay"}])
-                    save_data("
+                    save_data("Fees Payment", pd.concat([fees_df, new_p]))
+                    
+                    wa_msg = f"🧾 *SAI STAR RECEIPT*\nStudent: {s_name}\nMonth: {f_month}\nAmount: ₹{f_amt}\nStatus: Paid. Thank you!"
+                    st.link_button("📲 Send WhatsApp Receipt", f"https://wa.me/{clean_phone_number(s_data['Mobile Number'])}?text={urllib.parse.quote(wa_msg)}")
+                    st.rerun()
+
+# -----------------------------------------------------------------------------
+# 6. EXECUTION
+# -----------------------------------------------------------------------------
+if menu == "🏏 Booking Manager":
+    booking_manager()
+else:
+    academy_management()
